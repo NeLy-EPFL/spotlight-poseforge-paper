@@ -1,0 +1,50 @@
+[project]
+name = "spotlight-poseforge-paper"
+version = "0.1.0"
+description = "Analysis and visualization for Wang-Chen et al. (2026)"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "ipykernel>=6,<7",
+    "ipython>=9.10,<10.0",
+    "numpy>=2.4,<3",
+    "scipy>=1.17,<2",
+    "polars>=1.38,<2",
+    "h5py>=3.15,<4",
+    "optuna>=4.7,<5",
+    "matplotlib>=3.10,<4",
+    "tqdm>=4.67,<5",
+    "imageio>=2.37.0,<3",
+    "imageio-ffmpeg==0.6.0",
+    "joblib>=1.5.1,<2",
+    "seaborn==0.13.2",
+    "pyvista==0.46.3",
+    "h5py>=3.14,<4",
+    "scikit-learn>=1.7.2,<2",
+    "PyYAML>=6.0.3,<7",
+    "cmasher>=1.3.3,<2",
+    "imagecodecs==2025.8.2",
+    "opencv-python>=4.12,<5",
+    "av>=16,<17",
+    "poseforge",
+    "spotlight-tools",
+    "flygym",
+]
+
+[project.optional-dependencies]
+dev = [
+    "black>=26.1,<27",
+    "nbstripout==0.9.0",  # git pre-commit filter: strips output from ipynb notebooks
+]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.uv.sources]
+poseforge = { path = "../poseforge", editable = true }
+spotlight-tools = { path = "../spotlight-tools", editable = true }
+flygym = { path = "../flygym-v2", editable = true }
