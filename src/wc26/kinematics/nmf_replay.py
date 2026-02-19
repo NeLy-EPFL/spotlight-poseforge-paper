@@ -1,4 +1,4 @@
-from wc26.common.plot import setup_matplotlib_params, palette
+from wc26.common.plot import setup_matplotlib_params
 
 setup_matplotlib_params()
 
@@ -10,6 +10,7 @@ import h5py
 import optuna
 import yaml
 import matplotlib.pyplot as plt
+import matplotlib.gridspec as gridspec
 from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 from tqdm import trange
@@ -28,21 +29,29 @@ from flygym.utils.math import Rotation3D
 from spotlight_tools.calibration import SpotlightPositionMapper
 
 import wc26.common.io as io
-import wc26.kinematics.config as config
+import wc26.kinematics.shared_constants as const
 from wc26.kinematics.naming_convention import joint_name_seqikpy2flygym
-from wc26.common.filter import median_filter_over_time
 
 
 def optimize_sim_params(
+    study_name,
     target_angles_arr_sim,
     thorax_pos_rec,
     rec_match_mask,
+    params_config,
+    out_dir,
     n_trials=20,
     n_jobs=1,
-    sg_window_sec=0.2,
-    params_config=config.OPTIMIZABLE_PHYS_PARAMS,
-    out_dir=config.PHYS_PARAMS_TUNING_DIR,
-    fps=config.DATA_FPS,
+    window_sec=0.2,
+    angvel_window_2ndpass_sec=0.1,
+    fps=const.DATA_FPS,
+    w_speed=1,
+    w_angvel=2,
+    w_ruggedness=50,
+    w_align_nrmse=200,
+    multiobjective=False,
+    decompose_traj_mismatch=False,
+    load_if_exists=False,
 ):
     out_dir.mkdir(exist_ok=True, parents=True)
 
@@ -60,62 +69,92 @@ def optimize_sim_params(
         )
 
         # Compute trajectory match
-        thorax_pos_sim = sim_results["thorax_pos"][rec_match_mask, :2]
-        thorax_pos_sim = thorax_pos_sim - thorax_pos_sim[0, :]
-        R, t, thorax_pos_rec_aligned, align_metrics = align_2d_traj(
-            thorax_pos_rec, thorax_pos_sim, anchor_origin=False
-        )
-        traj_similarity_metrics, debug_vars = compute_traj_similarity(
-            thorax_pos_sim, thorax_pos_rec_aligned, window_sec=sg_window_sec, fps=fps
-        )
-        debug_plot_path = out_dir / f"trial{trial.number:04d}_debug.png"
-        make_debug_plots(
-            traj_similarity_metrics, align_metrics, debug_vars, debug_plot_path
+        metrics, debug_vars = compute_traj_similarity(
+            sim_results["thorax_pos"][rec_match_mask, :2],
+            thorax_pos_rec,
+            window_sec=window_sec,
+            angvel_window_2ndpass_sec=angvel_window_2ndpass_sec,
+            fps=fps,
+            w_speed=w_speed,
+            w_angvel=w_angvel,
+            w_align_nrmse=w_align_nrmse,
+            w_ruggedness=w_ruggedness,
+            decompose_traj_mismatch=decompose_traj_mismatch,
         )
 
         # Save output and metadata
-        sim.renderer.save_video(out_dir / f"trial{trial.number:04d}.mp4")
-        with open(out_dir / f"trial{trial.number:04d}.pkl", "wb") as f:
+        stem = f"trial{trial.number:04d}"
+        make_debug_plots(
+            metrics,
+            debug_vars,
+            decompose_traj_mismatch=decompose_traj_mismatch,
+            output_path=out_dir / f"{stem}.png",
+        )
+        sim.renderer.save_video(out_dir / f"{stem}.mp4")
+        sim.renderer.mj_renderer.close()  # gc manually - fixes weird renderer __del__ error
+        del sim.renderer
+        with open(out_dir / f"{stem}.pkl", "wb") as f:
             metadata = {
                 "phys_params": phys_params,
                 "sim_results": sim_results,
-                "traj_similarity_metrics": traj_similarity_metrics,
+                "metrics": metrics,
+                "debug_vars": debug_vars,
             }
             pickle.dump(metadata, f)
 
-        print(f"Trial {trial.number}:", traj_similarity_metrics)
-        # total = (
-        #     align_metrics["normalized_rmse"]
-        #     + traj_similarity_metrics["ruggedness_mismatch"]
-        # )
-        # return total
-        return (
-            align_metrics["normalized_rmse"],
-            traj_similarity_metrics["ruggedness_mismatch"],
+        # Return final metrics for optimization
+        if multiobjective:
+            return metrics["traj_mismatch"], metrics["ruggedness_mismatch"]
+        else:
+            return metrics["total"]
+
+    # Set up Optuna study
+    storage_path = f"sqlite:///{out_dir.absolute() / 'optuna_study.db'}"
+    if multiobjective:
+        study = optuna.create_study(
+            study_name=study_name,
+            directions=["minimize", "minimize"],
+            sampler=optuna.samplers.NSGAIISampler(),
+            storage=storage_path,
+            load_if_exists=load_if_exists,
+        )
+    else:
+        study = optuna.create_study(
+            study_name=study_name,
+            direction="minimize",
+            storage=storage_path,
+            load_if_exists=load_if_exists,
         )
 
-    study = optuna.create_study(
-        directions=["minimize", "minimize"], sampler=optuna.samplers.NSGAIISampler()
-    )
+    # Enqueue initial trial with reasonable defaults
     initial_params = {
         name: param_config["init"] for name, param_config in params_config.items()
     }
     study.enqueue_trial(initial_params)
+
+    # Run optimization
     study.optimize(objective, n_trials=n_trials, n_jobs=n_jobs)
 
-    # trials_df = study.trials_dataframe()
-    # print("Best trial:", study.best_trial.number)
-    # print("Best parameters:", study.best_params)
-    # with open(out_dir / "best.yaml", "w") as f:
-    #     yaml.dump(study.best_params, f)
-    pareto_trials = study.best_trials
-    res = {}
-    print("Pareto-optimal trials:")
-    for trial in pareto_trials:
-        res[trial.number] = {"values": trial.values, "params": trial.params}
-        print(f"  Trial {trial.number}:", trial.values, trial.params)
-    with open(out_dir / "pareto_optimal_trials.yaml", "w") as f:
-        yaml.dump(res, f)
+    # Summarize and save best trial(s)
+    if multiobjective:
+        best_trials = study.best_trials
+        print("Pareto optimal trials:")
+        res = {}
+        for trial in best_trials:
+            print(f"Trial {trial.number}: value={trial.values}, params={trial.params}")
+            res[trial.number] = {
+                "value": trial.values,
+                "params": trial.params,
+            }
+        with open(out_dir / "best.yaml", "w") as f:
+            yaml.dump(res, f)
+    else:
+        trial = study.best_trial
+        print(f"Best trial: {trial.number}, value={trial.value}, params={trial.params}")
+        with open(out_dir / "best.yaml", "w") as f:
+            yaml.dump(
+                {"trial": trial.number, "value": trial.value, "params": trial.params}, f
+            )
 
     trials_df = study.trials_dataframe()
     trials_df.to_csv(out_dir / "trials_summary.csv", index=False)
@@ -136,6 +175,7 @@ def run_simulation(sim, fly, target_angles_arr, disable_pbar=None):
         sim.render_as_needed()
         body_pos_li.append(sim.get_body_positions(fly.name).copy())
         actuator_forces_li.append(sim.get_actuator_forces(fly.name, actuator_ty).copy())
+
     # Postproces recorded simulation states
     thorax_idx = [dof.name for dof in fly.get_bodysegs_order()].index("c_thorax")
     thorax_pos = np.array(body_pos_li)[:, thorax_idx]
@@ -157,15 +197,17 @@ def set_up_simulation(
     actuator_timeconst_nsteps,
     sliding_friction,
     torsional_friction,
+    passive_tarsal_stiffness=const.PASSIVE_TARSAL_STIFFNESS,
+    passive_tarsal_damping=const.PASSIVE_TARSAL_DAMPING,
 ):
     # Create fly and add joints
     fly = Fly()
     fly.mjcf_root.option.integrator = "implicitfast"
 
     skeleton = Skeleton(
-        axis_order=config.AXIS_ORDER, joint_preset=config.ARTICULATED_JOINTS
+        axis_order=const.AXIS_ORDER, joint_preset=const.ARTICULATED_JOINTS
     )
-    neutral_pose = KinematicPose(path=config.NEUTRAL_POSE_FILE)
+    neutral_pose = KinematicPose(path=const.NEUTRAL_POSE_FILE)
     fly.add_joints(
         skeleton,
         neutral_pose=neutral_pose,
@@ -175,15 +217,13 @@ def set_up_simulation(
     n_tarsus_overrides = 0
     for dof, mjcf_joint in fly.jointdof_to_mjcfjoint.items():
         if dof.child.link in ("tarsus2", "tarsus3", "tarsus4", "tarsus5"):
-            mjcf_joint.stiffness = 10
-            mjcf_joint.damping = 0.5
+            mjcf_joint.stiffness = passive_tarsal_stiffness
+            mjcf_joint.damping = passive_tarsal_damping
             n_tarsus_overrides += 1
     assert n_tarsus_overrides == 4 * 6, "error overriding tarsus joint params"
 
     # Add position actuators and set them to the neutral pose
-    actuated_dofs_list = fly.skeleton.get_actuated_dofs_from_preset(
-        config.ACTUATED_DOFS
-    )
+    actuated_dofs_list = fly.skeleton.get_actuated_dofs_from_preset(const.ACTUATED_DOFS)
     fly.add_actuators(
         actuated_dofs_list,
         actuator_type=ActuatorType.POSITION,
@@ -200,7 +240,7 @@ def set_up_simulation(
 
     # Create a world and spawn the fly
     world = FlatGroundWorld()
-    spawn_position = (0, 0, config.SPAWN_HEIGHT)
+    spawn_position = (0, 0, const.SPAWN_HEIGHT)
     spawn_rotation = Rotation3D("quat", (1, 0, 0, 0))
     contact_params = ContactParams(
         sliding_friction=sliding_friction, torsional_friction=torsional_friction
@@ -213,8 +253,8 @@ def set_up_simulation(
     sim = Simulation(world)
     sim.set_renderer(
         camera,
-        playback_speed=config.VIDEO_PLAYBACK_SPEED,
-        output_fps=config.VIDEO_OUTPUT_FPS,
+        playback_speed=const.VIDEO_PLAYBACK_SPEED,
+        output_fps=const.VIDEO_OUTPUT_FPS,
     )
 
     return sim, fly
@@ -403,73 +443,101 @@ def align_2d_traj(traj, traj_ref, anchor_origin: bool = True):
 
 
 def compute_traj_similarity(
-    traj, traj_ref, window_sec=0.2, fps=config.DATA_FPS, polyorder=2
+    traj,
+    traj_ref,
+    window_sec,
+    angvel_window_2ndpass_sec,
+    fps,
+    w_speed=1,
+    w_angvel=2,
+    w_align_nrmse=200,
+    w_ruggedness=50,
+    polyorder=2,
+    kpct=90,
+    decompose_traj_mismatch=False,
 ):
-    # Smooth velocity time series using Savitzky-Golay filter
+    # Compute integer window size
     dt = 1 / fps
-    window_length = int(np.round(window_sec * fps))
-    if window_length % 2 == 0:
-        window_length += 1  # window_length must be odd for savgol_filter
-    vel = savgol_filter(
-        traj, window_length, polyorder=polyorder, deriv=1, delta=dt, axis=0
-    )
-    vel_ref = savgol_filter(
-        traj_ref, window_length, polyorder=polyorder, deriv=1, delta=dt, axis=0
-    )
+    window_size = int(np.round(window_sec * fps))
+    if window_size % 2 == 0:
+        window_size += 1  # window_size must be odd for savgol_filter
+    if angvel_window_2ndpass_sec is not None:
+        window_size_angvel_2ndpass = int(np.round(angvel_window_2ndpass_sec * fps))
+        if window_size_angvel_2ndpass % 2 == 0:
+            window_size_angvel_2ndpass += 1  # must be odd for savgol_filter
 
-    # Compute similarity score based on velocity match
-    speed, ang_vel = cartesian_vel_to_speed_and_angular_vel(vel)
-    speed_ref, ang_vel_ref = cartesian_vel_to_speed_and_angular_vel(vel_ref)
-    mean_ref_speed = np.mean(speed_ref)
-    if mean_ref_speed == 0:
-        raise ValueError(
-            "ref_traj has zero mean speed. Cannot compute speed mismatch score."
+    metrics = {"total": 0}
+    debug_vars = {"traj": traj, "traj_ref": traj_ref, "dt": dt}
+
+    if decompose_traj_mismatch:
+        # Compute match in egocentric kinematics (forward speed and turn rate time series)
+        speed, angvel = traj_to_egocentric_kinematics(
+            traj, dt, window_size, window_size_angvel_2ndpass, polyorder
         )
-    speed_mismatch = np.mean(np.abs(speed - speed_ref)) / mean_ref_speed
-    ang_vel_mismatch = np.mean(np.abs(ang_vel - ang_vel_ref))
+        speed_ref, angvel_ref = traj_to_egocentric_kinematics(
+            traj_ref, dt, window_size, window_size_angvel_2ndpass, polyorder
+        )
+        speed_mismatch_ts = np.abs(speed - speed_ref)
+        angvel_mismatch_ts = np.abs(angvel - angvel_ref)
+        speed_err_mean = mean_of_lowest_kpct(speed_mismatch_ts, kpct)
+        angvel_err_mean = mean_of_lowest_kpct(angvel_mismatch_ts, kpct)
+        traj_mismatch_total = w_speed * speed_err_mean + w_angvel * angvel_err_mean
 
-    # Compute score for ruggedness of the trajectory
+        metrics["speed_mismatch"] = speed_err_mean
+        metrics["angvel_mismatch"] = angvel_err_mean
+        metrics["traj_mismatch"] = traj_mismatch_total
+        metrics["total"] += traj_mismatch_total
+        debug_vars["speed"] = speed
+        debug_vars["angvel"] = angvel
+        debug_vars["speed_ref"] = speed_ref
+        debug_vars["angvel_ref"] = angvel_ref
+        debug_vars["speed_mismatch_ts_weighted"] = w_speed * speed_mismatch_ts
+        debug_vars["angvel_mismatch_ts_weighted"] = w_angvel * angvel_mismatch_ts
+        debug_vars["speed_mismatch_weighted"] = w_speed * speed_err_mean
+        debug_vars["angvel_mismatch_weighted"] = w_angvel * angvel_err_mean
+
+    else:
+        # Compute trajectory alignment metrics
+        traj_zeroed = traj - traj[0, :]
+        _, _, traj_ref_aligned, alignment_metrics = align_2d_traj(
+            traj_ref, traj_zeroed, anchor_origin=False
+        )
+        speed_err_mean = np.nan
+        angvel_err_mean = np.nan
+        align_nrmse = alignment_metrics["normalized_rmse"]
+
+        metrics["traj_mismatch"] = align_nrmse
+        metrics["total"] += w_align_nrmse * align_nrmse
+        debug_vars["align_nrmse_weighted"] = w_align_nrmse * align_nrmse
+
+    # Compute ruggedness of trajectory
+    cartvel_smoothed = savgol_filter(
+        traj, window_size, polyorder, deriv=1, delta=dt, axis=0
+    )
+    traj_smoothed = np.cumsum(cartvel_smoothed, axis=0) * dt + traj[0, :]
     traj_len = compute_traj_len(traj)
-    traj_smoothed = np.cumsum(vel, axis=0) * dt
     traj_smoothed_len = compute_traj_len(traj_smoothed)
+
+    cartvel_ref_smoothed = savgol_filter(
+        traj_ref, window_size, polyorder, deriv=1, delta=dt, axis=0
+    )
+    traj_ref_smoothed = np.cumsum(cartvel_ref_smoothed, axis=0) * dt + traj_ref[0, :]
     traj_ref_len = compute_traj_len(traj_ref)
-    traj_ref_smoothed = np.cumsum(vel_ref, axis=0) * dt
-    traj_ref_smoothed += traj_ref[0, :]  # in case alignment is not anchored at origin
     traj_ref_smoothed_len = compute_traj_len(traj_ref_smoothed)
-    if traj_smoothed_len == 0 or traj_ref_smoothed_len == 0:
-        raise ValueError(
-            "Smoothed traj or ref_traj has 0 length. Cannot compute ruggedness score."
-        )
+
+    lengths = [traj_len, traj_smoothed_len, traj_ref_len, traj_ref_smoothed_len]
+    if any(l == 0 for l in lengths):
+        raise ValueError("At least one trajectory has 0 length. This shouldn't happen.")
     traj_ruggedness = traj_len / traj_smoothed_len
     traj_ref_ruggedness = traj_ref_len / traj_ref_smoothed_len
-    ruggedness_ratio = traj_ruggedness / traj_ref_ruggedness
-    # ruggedness_mismatch_score = max(ruggedness_ratio, 1 / ruggedness_ratio) - 1
-    ruggedness_mismatch_score = np.log(ruggedness_ratio) ** 2
+    ruggedness_mismatch = np.abs(np.log(traj_ruggedness / traj_ref_ruggedness))
 
-    metrics = {
-        "speed_mismatch": float(speed_mismatch),
-        "ang_vel_mismatch": float(ang_vel_mismatch),
-        "ruggedness_mismatch": float(ruggedness_mismatch_score),
-    }
-    debug_vars = {
-        "traj": traj,
-        "traj_ref": traj_ref,
-        "vel": vel,
-        "vel_ref": vel_ref,
-        "traj_smoothed": traj_smoothed,
-        "traj_ref_smoothed": traj_ref_smoothed,
-        "speed": speed,
-        "speed_ref": speed_ref,
-        "ang_vel": ang_vel,
-        "ang_vel_ref": ang_vel_ref,
-        "traj_len": traj_len,
-        "traj_smoothed_len": traj_smoothed_len,
-        "traj_ref_len": traj_ref_len,
-        "traj_ref_smoothed_len": traj_ref_smoothed_len,
-        "traj_ruggedness": traj_ruggedness,
-        "traj_ref_ruggedness": traj_ref_ruggedness,
-        "dt": dt,
-    }
+    metrics["ruggedness_mismatch"] = ruggedness_mismatch
+    metrics["total"] += w_ruggedness * ruggedness_mismatch
+    debug_vars["traj_smoothed"] = traj_smoothed
+    debug_vars["traj_ref_smoothed"] = traj_ref_smoothed
+    debug_vars["ruggedness_mismatch_weighted"] = w_ruggedness * ruggedness_mismatch
+
     return metrics, debug_vars
 
 
@@ -477,99 +545,229 @@ def compute_traj_len(traj):
     return np.linalg.norm(np.diff(traj, axis=0), axis=1).sum()
 
 
-def cartesian_vel_to_speed_and_angular_vel(vel):
-    """Return speed and signed angular velocity from a velocity array (L, 2)."""
-    speed = np.linalg.norm(vel, axis=1)  # (L,)
-
-    # ang_vel = (vx * ay - vy * ax) / speed ** 2  -  signed curvature * speed
-    # Use finite differences on velocity to get acceleration
-    # (or you could pass deriv=2 through savgol separately)
-    vx, vy = vel[:, 0], vel[:, 1]
-    ax = np.gradient(vx)
-    ay = np.gradient(vy)
-    with np.errstate(invalid="ignore", divide="ignore"):
-        ang_vel = np.where(speed > 0, (vx * ay - vy * ax) / speed**2, 0.0)
-
-    return speed, ang_vel
+def mean_of_lowest_kpct(arr, kpct):
+    """Compute the mean of the lowest kpct% of values in arr."""
+    if len(arr.shape) != 1:
+        raise ValueError("Input array must be 1D")
+    k = max(1, int(arr.size * kpct / 100))
+    return np.mean(np.partition(arr, k)[:k])
 
 
-def make_debug_plots(traj_similarity_metrics, align_metrics, debug_vars, output_path):
-    # fig, axes = plt.subplots(
-    #     3,
-    #     1,
-    #     figsize=(6, 6),
-    #     tight_layout=True,
-    #     gridspec_kw={"height_ratios": [2, 1, 1]},
-    # )
-    fig, ax = plt.subplots(figsize=(6, 4), tight_layout=True)
-    color_rec = palette[0]
-    color_sim = palette[1]
+def traj_to_egocentric_kinematics(
+    traj, dt, window_size, window_size_angvel_2ndpass=None, polyorder=2
+):
+    """Compute ego-centric speed and angular velocity from a 2D trajectory.
+
+    Uses Savitzky-Golay filtering throughout to avoid double-differentiation:
+    speed comes from a single SG deriv=1 pass on position, and angular velocity
+    comes from a single SG deriv=1 pass on the unwrapped heading angle.
+
+    Args:
+        traj: (L, 2) raw world-frame x-y positions.
+        dt: time step in seconds (1 / fps).
+        window_size: SG window size (number of samples, must be odd) used
+            for speed computation.
+        window_size_angvel_2ndpass: SG window size (number of samples, must be odd) used
+            for angular velocity computation in a second pass to reduce noise.
+        polyorder: SG polynomial order.
+
+    Returns:
+        speed:   (L,) scalar forward speed in units of traj / second.
+        angvel: (L,) signed angular velocity in rad/s. Positive = turning
+                 counter-clockwise.
+    """
+    # Ensure odd window lengths
+    if window_size % 2 == 0:
+        window_size += 1
+    if window_size_angvel_2ndpass is not None and window_size_angvel_2ndpass % 2 == 0:
+        window_size_angvel_2ndpass += 1
+
+    # Speed: one SG pass on position
+    vel = savgol_filter(traj, window_size, polyorder, deriv=1, delta=dt, axis=0)
+    speed = np.linalg.norm(vel, axis=1)
+
+    # Angular velocity: differentiate heading directly, avoiding double-differentiation
+    # Unwrap to remove +-pi discontinuities before filtering
+    heading = np.unwrap(np.arctan2(vel[:, 1], vel[:, 0]))
+    if window_size_angvel_2ndpass is None:
+        angvel = np.gradient(heading, dt)
+    else:
+        angvel = savgol_filter(
+            heading, window_size_angvel_2ndpass, polyorder, deriv=1, delta=dt
+        )
+
+    return speed, angvel
+
+
+def make_debug_plots(
+    traj_similarity_metrics, debug_vars, decompose_traj_mismatch=False, output_path=None
+):
+    if decompose_traj_mismatch:
+        fig, axes = _make_debug_plots_decompose_traj_mismatch(
+            traj_similarity_metrics, debug_vars, output_path
+        )
+    else:
+        fig, axes = _make_debug_plots_global_traj_mismatch(
+            traj_similarity_metrics, debug_vars, output_path
+        )
+
+    if output_path is not None:
+        fig.savefig(output_path)
+        plt.close(fig)
+    else:
+        return fig, axes
+
+
+def _make_debug_plots_decompose_traj_mismatch(
+    traj_similarity_metrics, debug_vars, output_path=None
+):
+    # Align ref trajectory to simulated trajectory for better visual comparison
+    traj_sim = debug_vars["traj"]
+    traj_sim = traj_sim - traj_sim[0, :]  # anchor to origin
+    traj_ref_unaligned = debug_vars["traj_ref"]
+    _, _, traj_ref, _ = align_2d_traj(traj_ref_unaligned, traj_sim, anchor_origin=True)
+    n_steps = traj_sim.shape[0]
+    t_grid = np.arange(n_steps) * debug_vars["dt"]
+
+    # Set up figure
+    fig = plt.figure(figsize=(12, 6))
+    gs = gridspec.GridSpec(
+        3, 2, figure=fig, width_ratios=[1, 0.7], hspace=0.3, wspace=0.2
+    )
+    ax_traj = plt.subplot(gs[:, 0])
+    ax_speed = plt.subplot(gs[0, 1])
+    ax_angvel = plt.subplot(gs[1, 1])
+    ax_scores = plt.subplot(gs[2, 1])
+    color_rec = "#546A76"
+    color_sim = "#FC7A1E"
+    color_speed = "#79A63D"
+    color_angvel = "#B7CF98"
+    color_align_nrmse = color_speed
+    color_ruggedness = "#F7AEF8"
 
     # Aligned trajectories
-    # ax = axes[0]
-    ax.plot(
-        debug_vars["traj_ref"][:, 0],
-        debug_vars["traj_ref"][:, 1],
-        label="Recorded (raw)",
-        color=color_rec,
-        linestyle="--",
+    ax_traj.plot(traj_ref[:, 0], traj_ref[:, 1], label="Recorded", color=color_rec)
+    ax_traj.plot(traj_sim[:, 0], traj_sim[:, 1], label="Simulated", color=color_sim)
+    ax_traj.scatter([0], [0], color="black", marker="o", label="Origin", zorder=10)
+    ax_traj.set_aspect("equal")
+    xlim = ax_traj.get_xlim()
+    ylim = ax_traj.get_ylim()
+    xcenter = np.mean(xlim)
+    ycenter = np.mean(ylim)
+    max_range = max(xlim[1] - xlim[0], ylim[1] - ylim[0])  # already has some padding
+    half_range = max_range / 2
+    ax_traj.set_xlim(xcenter - half_range, xcenter + half_range)
+    ax_traj.set_ylim(ycenter - half_range, ycenter + half_range)
+    ax_traj.legend(frameon=False)
+
+    # Linear speed
+    ax_speed.plot(t_grid, debug_vars["speed_ref"], label="Recorded", color=color_rec)
+    ax_speed.plot(t_grid, debug_vars["speed"], label="Simulated", color=color_sim)
+    ax_speed.set_title("Linear speed")
+    ax_speed.legend(bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
+    ax_speed.set_ylabel("Speed (mm/s)")
+    ax_speed.set_xticklabels([])
+    ax_speed.set_xlim(t_grid[0], t_grid[-1])
+    ax_speed.set_ylim(bottom=0)
+
+    # Angular velocity
+    angvel_ref_turns = debug_vars["angvel_ref"] / (2 * np.pi)
+    angvel_turns = debug_vars["angvel"] / (2 * np.pi)
+    ax_angvel.axhline(0, color="black", linestyle="-", linewidth=1, zorder=-10)
+    ax_angvel.plot(t_grid, angvel_ref_turns, label="Recorded", color=color_rec)
+    ax_angvel.plot(t_grid, angvel_turns, label="Simulated", color=color_sim)
+    ax_angvel.set_title("Turn rate")
+    ax_angvel.set_ylabel("Ang. vel. (turns/s)")
+    ax_angvel.set_xticklabels([])
+    ax_angvel.set_xlim(t_grid[0], t_grid[-1])
+    max_mag = np.abs(ax_angvel.get_ylim()).max()
+    ax_angvel.set_ylim(-max_mag, max_mag)
+
+    # Similarity scores
+    ruggedness_mismatch_weighted = (
+        np.ones(n_steps) * debug_vars["ruggedness_mismatch_weighted"]
     )
-    ax.plot(
-        debug_vars["traj_ref_smoothed"][:, 0],
-        debug_vars["traj_ref_smoothed"][:, 1],
-        label="Recorded (smoothed)",
-        color=color_rec,
-        linestyle="-",
+    speed_mismatch_ts_weighted = debug_vars["speed_mismatch_ts_weighted"]
+    angvel_mismatch_ts_weighted = debug_vars["angvel_mismatch_ts_weighted"]
+    ax_scores.stackplot(
+        t_grid,
+        speed_mismatch_ts_weighted,
+        angvel_mismatch_ts_weighted,
+        ruggedness_mismatch_weighted,
+        labels=["Speed", "Angular velocity", "Ruggedness"],
+        colors=[color_speed, color_angvel, color_ruggedness],
     )
-    ax.plot(
-        debug_vars["traj"][:, 0],
-        debug_vars["traj"][:, 1],
-        label="Simulated (raw)",
-        color=color_sim,
-        linestyle="--",
+    ax_scores.set_title("Mismatch metric breakdown")
+    ax_scores.set_xlabel("Time (s)")
+    ax_scores.set_ylabel("Metric (a.u.)")
+    ax_scores.legend(bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
+    ax_scores.set_xlim(t_grid[0], t_grid[-1])
+    score_text = (
+        f"Total mismatch: {traj_similarity_metrics['total']:.2e}\n"
+        f"Speed term: {debug_vars['speed_mismatch_weighted']:.2e}\n"
+        f"Ang. vel. term: {debug_vars['angvel_mismatch_weighted']:.2e}\n"
+        f"Ruggedness term: {debug_vars['ruggedness_mismatch_weighted']:.2e}"
     )
-    ax.plot(
-        debug_vars["traj_smoothed"][:, 0],
-        debug_vars["traj_smoothed"][:, 1],
-        label="Simulated (smoothed)",
-        color=color_sim,
-        linestyle="-",
+    ax_scores.text(
+        0.99,
+        0.97,
+        score_text,
+        transform=ax_scores.transAxes,
+        horizontalalignment="right",
+        verticalalignment="top",
+        fontsize="small",
     )
-    ax.set_title(
-        "Aligned trajectories\n"
-        f"ruggedness mismatch: {traj_similarity_metrics['ruggedness_mismatch']:.3f}\n"
-        f"Normalized RMSE: {align_metrics['normalized_rmse']:.3f}"
-    )
+
+    axes = {
+        "traj": ax_traj,
+        "speed": ax_speed,
+        "angvel": ax_angvel,
+        "scores": ax_scores,
+    }
+    return fig, axes
+
+
+def _make_debug_plots_global_traj_mismatch(
+    traj_similarity_metrics, debug_vars, output_path=None
+):
+    # Align ref trajectory to simulated trajectory for better visual comparison
+    traj_sim = debug_vars["traj"]
+    traj_sim = traj_sim - traj_sim[0, :]  # anchor to origin
+    traj_ref_unaligned = debug_vars["traj_ref"]
+    _, _, traj_ref, _ = align_2d_traj(traj_ref_unaligned, traj_sim, anchor_origin=True)
+
+    # Set up figure
+    fig, ax = plt.subplots(figsize=(5, 4), tight_layout=True)
+    color_rec = "#546A76"
+    color_sim = "#FC7A1E"
+
+    # Aligned trajectories
+    ax.plot(traj_ref[:, 0], traj_ref[:, 1], label="Recorded", color=color_rec)
+    ax.plot(traj_sim[:, 0], traj_sim[:, 1], label="Simulated", color=color_sim)
+    ax.scatter([0], [0], color="black", marker="o", label="Origin", zorder=10)
     ax.set_aspect("equal")
-    ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left")
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    xcenter = np.mean(xlim)
+    ycenter = np.mean(ylim)
+    max_range = max(xlim[1] - xlim[0], ylim[1] - ylim[0])  # already has some padding
+    half_range = max_range / 2
+    ax.set_xlim(xcenter - half_range, xcenter + half_range)
+    ax.set_ylim(ycenter - half_range, ycenter + half_range)
+    ax.legend(bbox_to_anchor=(1.02, 1), loc="upper left", frameon=False)
+    score_text = (
+        f"Total mismatch: {traj_similarity_metrics['total']:.2e}\n"
+        f"Trajectory nRMSE: {debug_vars['align_nrmse_weighted']:.2e}\n"
+        f"Ruggedness term: {debug_vars['ruggedness_mismatch_weighted']:.2e}"
+    )
+    ax.text(
+        1.04,
+        0.02,
+        score_text,
+        transform=ax.transAxes,
+        horizontalalignment="left",
+        verticalalignment="bottom",
+        fontsize="medium",
+    )
 
-    # # Scalar speed
-    # ax = axes[1]
-    # t_grid = np.arange(debug_vars["traj"].shape[0]) * debug_vars["dt"]
-    # ax.plot(
-    #     t_grid, debug_vars["speed_ref"], label="Recorded (smoothed)", color=color_rec
-    # )
-    # ax.plot(t_grid, debug_vars["speed"], label="Simulated (smoothed)", color=color_sim)
-    # ax.set_title(f"Speed mismatch: {traj_similarity_metrics['speed_mismatch']:.3f}")
-    # ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left")
-    # ax.set_ylabel("Speed (mm/s)")
-    # ax.set_xlabel("Time (s)")
-    # ax.set_xlim(t_grid[0], t_grid[-1])
-
-    # # Angular velocity
-    # ax = axes[2]
-    # ax.plot(
-    #     t_grid, debug_vars["ang_vel_ref"], label="Recorded (smoothed)", color=color_rec
-    # )
-    # ax.plot(
-    #     t_grid, debug_vars["ang_vel"], label="Simulated (smoothed)", color=color_sim
-    # )
-    # ax.set_title(
-    #     f"Angular velocity mismatch: {traj_similarity_metrics['ang_vel_mismatch']:.3f}"
-    # )
-    # ax.set_ylabel("Angular velocity (rad/s)")
-    # ax.set_xlabel("Time (s)")
-    # ax.set_xlim(t_grid[0], t_grid[-1])
-
-    fig.savefig(output_path)
-    plt.close(fig)
+    return fig, ax

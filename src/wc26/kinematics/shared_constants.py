@@ -30,14 +30,16 @@ NEUTRAL_POSE_FILE = io.get_flygym_assetdir() / "model/pose/neutral.yaml"
 SPAWN_HEIGHT = 0.7  # mm
 WARMUP_PERIOD_SEC = 0.05
 OPTIMIZABLE_PHYS_PARAMS = {
-    "joint_stiffness": {"lim": (1, 20), "init": 5.0},
-    "joint_damping": {"lim": (0.1, 1), "init": 0.5},
-    "actuator_gain": {"lim": (30, 300), "init": 150.0},
-    "actuator_dampratio": {"lim": (0, 1.5), "init": 0.2},
-    "actuator_timeconst_nsteps": {"lim": (0, 10), "init": 3},
+    "joint_stiffness": {"lim": (1, 20), "init": 2.7},
+    "joint_damping": {"lim": (0.1, 1), "init": 0.3},
+    "actuator_gain": {"lim": (30, 300), "init": 120.0},
+    "actuator_dampratio": {"lim": (0, 1.5), "init": 0.5},
+    "actuator_timeconst_nsteps": {"lim": (0, 33), "init": 10},
     "sliding_friction": {"lim": (0.5, 5), "init": 3.5},
-    "torsional_friction": {"lim": (0, 0.1), "init": 0.05},
+    "torsional_friction": {"lim": (0, 0.1), "init": 0.015},
 }
+PASSIVE_TARSAL_STIFFNESS = 10.0
+PASSIVE_TARSAL_DAMPING = 0.5
 
 # Display & visualization
 DOF_DISPLAY_NAMES = {

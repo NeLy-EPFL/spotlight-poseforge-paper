@@ -26,6 +26,7 @@ dependencies = [
     "imagecodecs==2025.8.2",
     "opencv-python>=4.12,<5",
     "av>=16,<17",
+    "plotly>=6.5,<7",
     "poseforge",
     "spotlight-tools",
     "flygym",
