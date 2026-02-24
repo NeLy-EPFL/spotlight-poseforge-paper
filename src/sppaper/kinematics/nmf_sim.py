@@ -122,7 +122,7 @@ class NeuroMechFlyReplayManager:
             mode="trackcom",
             target="nmf/c_thorax",
         )
-        
+
         # Create a simulation and set up the renderer
         sim = Simulation(world)
         sim.set_renderer(

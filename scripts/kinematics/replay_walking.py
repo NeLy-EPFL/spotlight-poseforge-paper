@@ -60,3 +60,5 @@ for i, invkin_snippet in enumerate(invkin_dataset):
         }
         pickle.dump(data, f)
     replay_instance.sim.renderer.save_video(my_outdir)
+
+replay_instance.sim.renderer.close()

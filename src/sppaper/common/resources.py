@@ -13,10 +13,7 @@ def get_outputs_dir() -> Path:
 
 
 def get_poseforge_datadir() -> Path:
-    # return Path(str(importlib_resources_files("poseforge").parent.parent / "bulk_data"))
-    return Path(
-        "~/Data/spotlight_poseforge_paper_data_links/poseforge/bulk_data/"
-    ).expanduser()
+    return Path(str(importlib_resources_files("poseforge").parent.parent / "bulk_data"))
 
 
 def get_flygym_assetdir() -> Path:
@@ -26,7 +23,4 @@ def get_flygym_assetdir() -> Path:
 
 
 def get_spotlight_trials_dir() -> Path:
-    # return get_inputs_dir() / "spotlight_trials"
-    return Path(
-        "~/Data/spotlight_poseforge_paper_data_links/spotlight_trials/"
-    ).expanduser()
+    return get_inputs_dir() / "spotlight_trials"
