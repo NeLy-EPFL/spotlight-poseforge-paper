@@ -34,6 +34,7 @@ LEG_DISP_NAMES = {
     "RH": "Right hind leg",
 }
 AXIS_DISPLAY_NAMES = {"x": "fore/aft", "y": "med/lat", "z": "height"}
+MM_TO_IN = 1 / 25.4
 
 
 def reduce_timeseries_sim2rec(ts, ctrl_update_mask, reduce_fn=np.mean, stride=1):
@@ -60,6 +61,7 @@ def plot_time_series(
     medkernel_size=const.KIN_MEDFILTER_SIZE,
     ratelim_xyz=const.XYZ_RATELIM,
     ratelim_angles=const.JOINT_ANGLE_RATELIM,
+    xticks_interval=0.5,
 ):
     if t_range is not None:
         start_idx_before = kinematic_snippet.start_idx
@@ -80,14 +82,22 @@ def plot_time_series(
     fig, axes = plt.subplots(
         4,
         1,
-        figsize=(6, 6),
+        figsize=(90 * MM_TO_IN, 100 * MM_TO_IN),
         gridspec_kw={"height_ratios": [2, 3, 3, 3]},
         tight_layout=True,
     )
 
+    last_xtick = t_grid[-1] + 1 / kinematic_snippet.data_fps
+    xticks = list(np.arange(0, last_xtick + 1e-6, xticks_interval))
+    xticklabels = [f"{x:.1f}" for x in xticks]
+    xticklabels[-1] += " s"
+
+    # ===== Claw xyz =====
     ax = axes[0]
     sns.despine(ax=ax)
     claw_idx = -1
+    yticks = []
+    yticklabels = []
     for i_axis, axis in enumerate("xyz"):
         ts = fwdkin_xyz[:, i_leg, claw_idx, i_axis]
         span = np.percentile(ts, [1, 99])
@@ -96,37 +106,34 @@ def plot_time_series(
         ax.plot(
             t_grid,
             ts - y_offset,
-            linewidth=1,
             label=axis,
             color=claw_xyz_color,
             clip_on=False,
         )
-        ax.text(
-            -0.005 * (t_grid[-1] - t_grid[0]),
-            y_center,
-            AXIS_DISPLAY_NAMES[axis],
-            va="center",
-            ha="right",
-            clip_on=False,
-            color=claw_xyz_color,
-            fontsize="small",
-        )
+        yticks.append(y_center)
+        yticklabels.append(AXIS_DISPLAY_NAMES[axis])
+
     # Add scale bar
     ax.plot(
-        [t_grid[-1] * 1.02] * 2, [0.2, 1.2], color="black", linewidth=2, clip_on=False
+        [t_grid[-1] * 1.02] * 2, [0.2, 1.2], color="black", linewidth=1, clip_on=False
     )
-    ax.text(t_grid[-1] * 1.04, 0.7, "1 mm", va="center", ha="left")
+    ax.text(t_grid[-1] * 1.03, 0.7, "1 mm", va="center", ha="left", fontsize="small")
+
     # Configure y axis
     y_max = 3 * claw_xyz_range
     ax.set_ylim(y_max + 0.25 * claw_xyz_range, 0)
-    ax.set_yticks([])
+    ax.set_yticks(yticks, yticklabels)
     ax.set_ylabel("Claw position", color=claw_xyz_color)
-    ax.yaxis.set_label_coords(-0.1, 0.5)
+    ax.yaxis.set_label_coords(-0.13, 0.5)
+
     # Configure x axis
-    ax.set_xticklabels([])
+    ax.set_xticks(xticks, xticklabels)
     ax.set_xlim(t_grid[0], t_grid[-1] + 1 / kinematic_snippet.data_fps)
 
+    # ===== Joint angles =====
     ax = axes[1]
+    yticks = []
+    yticklabels = []
     sns.despine(ax=ax)
     for i_dof, dof in enumerate(kinematic_snippet.metadata["dofs_order_per_leg"]):
         idx = kinematic_snippet.metadata["joints_order"].index(f"{leg.upper()}{dof}")
@@ -137,41 +144,37 @@ def plot_time_series(
         ax.plot(
             t_grid,
             ts - y_offset,
-            linewidth=1,
             label=dof,
             color=dof_angles_color,
             clip_on=False,
         )
-        ax.text(
-            -0.005 * (t_grid[-1] - t_grid[0]),
-            y_center,
-            DOF_DISPLAY_NAMES[dof],
-            va="center",
-            ha="right",
-            clip_on=False,
-            color=dof_angles_color,
-            fontsize="small",
-        )
+        yticks.append(y_center)
+        yticklabels.append(DOF_DISPLAY_NAMES[dof])
+
     # Add scale bar
     ax.plot(
         [t_grid[-1] * 1.02] * 2,
         [30, 75],
         color="black",
-        linewidth=2,
+        linewidth=1,
         clip_on=False,
     )
-    ax.text(t_grid[-1] * 1.04, 52.5, "45°", va="center", ha="left")
+    ax.text(t_grid[-1] * 1.03, 52.5, "45°", va="center", ha="left", fontsize="small")
+
     # Configure y axis
     y_max = len(kinematic_snippet.metadata["dofs_order_per_leg"]) * dof_angles_range
     ax.set_ylim(y_max + 0.25 * dof_angles_range, 0)
-    ax.set_yticks([])
+    ax.set_yticks(yticks, yticklabels)
     ax.set_ylabel("Joint angles", color=dof_angles_color)
-    ax.yaxis.set_label_coords(-0.1, 0.5)
+    ax.yaxis.set_label_coords(-0.13, 0.5)
+
     # Configure x axis
-    ax.set_xticklabels([])
+    ax.set_xticks(xticks, xticklabels)
     ax.set_xlim(t_grid[0], t_grid[-1] + 1 / kinematic_snippet.data_fps)
 
-    # Actuator force
+    # ===== Actuator force =====
+    yticks = []
+    yticklabels = []
     ax = axes[2]
     sns.despine(ax=ax)
     for i_dof, dof in enumerate(kinematic_snippet.metadata["dofs_order_per_leg"]):
@@ -186,40 +189,34 @@ def plot_time_series(
         ax.plot(
             t_grid,
             ts + y_offset,
-            linewidth=1,
             label=dof,
             color=actuator_forces_color,
             zorder=10,
         )
-        ax.text(
-            -0.005 * (t_grid[-1] - t_grid[0]),
-            y_offset,
-            DOF_DISPLAY_NAMES[dof],
-            va="center",
-            ha="right",
-            clip_on=False,
-            color=actuator_forces_color,
-            fontsize="small",
-        )
+        yticks.append(y_offset)
+        yticklabels.append(DOF_DISPLAY_NAMES[dof])
+
     # Add scale bar
     ax.plot(
         [t_grid[-1] * 1.02] * 2,
         [-5, 15],
         color="black",
-        linewidth=2,
+        linewidth=1,
         clip_on=False,
     )
-    ax.text(t_grid[-1] * 1.04, 5, "20 μN", va="center", ha="left")
+    ax.text(t_grid[-1] * 1.03, 5, "20 μN", va="center", ha="left", fontsize="small")
+
     # Configure y axis
     ax.set_ylim(6.5 * actuator_forces_range, -0.5 * actuator_forces_range)
-    ax.set_yticks([])
+    ax.set_yticks(yticks, yticklabels)
     ax.set_ylabel("Forces applied", color=actuator_forces_color)
-    ax.yaxis.set_label_coords(-0.1, 0.5)
+    ax.yaxis.set_label_coords(-0.13, 0.5)
+
     # Configure x axis
-    ax.set_xticklabels([])
+    ax.set_xticks(xticks, xticklabels)
     ax.set_xlim(t_grid[0], t_grid[-1] + 1 / kinematic_snippet.data_fps)
 
-    # Load by leg
+    # ===== Load by leg =====
     ax = axes[3]
     ts = sim_results["ground_contacts"]["forces_world"][steps_offset:, :, 2].copy() * -1
     ts[np.isnan(ts)] = 0
@@ -239,9 +236,10 @@ def plot_time_series(
     cbar = fig.colorbar(im, cax=cax)
     cbar.set_ticks([0, 4, 8], labels=["0", "4", "8 μN"])
     leg_disp_names = [x.upper() for x in LEGS]
-    ax.set_yticks(np.arange(6), leg_disp_names, fontsize="small")
+    ax.set_yticks(np.arange(6), leg_disp_names)
     ax.set_ylabel("Weight load by leg", color="black")
-    ax.yaxis.set_label_coords(-0.1, 0.5)
+    ax.yaxis.set_label_coords(-0.13, 0.5)
+    ax.set_xticks(xticks, xticklabels)
     ax.set_xlabel("Time (s)")
 
     return fig, axes
@@ -317,13 +315,19 @@ def plot_trajectory(
     t_range=None,
     rec_color="#546a76",
     sim_color="#689829",
+    xticks_interval=0.5,
 ):
     if t_range is not None:
         kinematic_snippet = kinematic_snippet.get_subselection(*t_range)
     dt = 1 / kinematic_snippet.data_fps
     t_grid = np.arange(len(kinematic_snippet)) * dt
 
-    fig = plt.figure(figsize=(12, 4), tight_layout=True)
+    last_xtick = t_grid[-1] + 1 / kinematic_snippet.data_fps
+    xticks = list(np.arange(0, last_xtick + 1e-6, xticks_interval))
+    xticklabels = [f"{x:.1f}" for x in xticks]
+    xticklabels[-1] += " s"
+
+    fig = plt.figure(figsize=(140 * MM_TO_IN, 50 * MM_TO_IN), tight_layout=True)
     gs = gridspec.GridSpec(2, 3)
     ax_traj = fig.add_subplot(gs[:, 0])
     ax_velx = fig.add_subplot(gs[0, 1])
@@ -360,7 +364,7 @@ def plot_trajectory(
         color=sim_color,
         linestyle="-",
     )
-    ax_traj.scatter([0], [0], color="black", label="Origin", s=15, zorder=10)
+    ax_traj.scatter([0], [0], color="black", label="Origin", s=5, zorder=10)
     ax_traj.legend()
     ax_traj.set_aspect("equal", adjustable="datalim")
     ax_traj.set_xlabel("x pos. (mm)")
@@ -376,7 +380,7 @@ def plot_trajectory(
     )
     ax_velx.set_ylabel("x vel. (mm/s)")
     ax_velx.set_xlim(0, t_grid[-1] + dt)
-    ax_velx.set_xticklabels([])
+    ax_velx.set_xticks(xticks, xticklabels)
     ax_velx.set_title("Velocity (global x)")
     sns.despine(ax=ax_velx)
     ax_vely.plot(
@@ -385,8 +389,8 @@ def plot_trajectory(
     ax_vely.plot(
         t_grid, trajs_info["basevelxy_sim"][:, 1], label="Simulated", color=sim_color
     )
-    ax_vely.set_xlabel("Time (s)")
     ax_vely.set_ylabel("y vel. (mm/s)")
+    ax_vely.set_xticks(xticks, xticklabels)
     ax_vely.set_xlim(0, t_grid[-1] + dt)
     ax_vely.set_title("Velocity (global y)")
     sns.despine(ax=ax_vely)
@@ -399,18 +403,25 @@ def plot_trajectory(
         t_grid, trajs_info["baselinspeed_sim"], label="Simulated", color=sim_color
     )
     ax_linspeed.set_ylabel("Linear speed (mm/s)")
-    ax_linspeed.set_xticklabels([])
+    ax_linspeed.set_xticks(xticks, xticklabels)
     ax_linspeed.set_xlim(0, t_grid[-1] + dt)
     ax_linspeed.set_title("Linear speed")
     sns.despine(ax=ax_linspeed)
     ax_turnrate.plot(
-        t_grid, trajs_info["baseturnrate_rec"], label="Recorded", color=rec_color
+        t_grid,
+        trajs_info["baseturnrate_rec"] / (2 * np.pi),
+        label="Recorded",
+        color=rec_color,
     )
     ax_turnrate.plot(
-        t_grid, trajs_info["baseturnrate_sim"], label="Simulated", color=sim_color
+        t_grid,
+        trajs_info["baseturnrate_sim"] / (2 * np.pi),
+        label="Simulated",
+        color=sim_color,
     )
     ax_turnrate.set_xlabel("Time (s)")
-    ax_turnrate.set_ylabel("Turn rate (rad/s)")
+    ax_turnrate.set_ylabel("Turn rate (turns/s)")
+    ax_turnrate.set_xticks(xticks, xticklabels)
     ax_turnrate.set_xlim(0, t_grid[-1] + dt)
     ax_turnrate.set_title("Turn rate")
     sns.despine(ax=ax_turnrate)
