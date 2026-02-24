@@ -82,7 +82,7 @@ def plot_time_series(
     fig, axes = plt.subplots(
         4,
         1,
-        figsize=(90 * MM_TO_IN, 100 * MM_TO_IN),
+        figsize=(100 * MM_TO_IN, 100 * MM_TO_IN),
         gridspec_kw={"height_ratios": [2, 3, 3, 3]},
         tight_layout=True,
     )
@@ -243,70 +243,6 @@ def plot_time_series(
     ax.set_xlabel("Time (s)")
 
     return fig, axes
-
-
-def align_smooth_decompose_trajectories(
-    kinematic_snippet: KinematicsSnippet,
-    sim_results: dict,
-    t_range=None,
-    posvelxy_sg_window_sec=0.5,
-    linspeed_sg_window_sec=0.5,
-    sg_window_turnrate_sec=1.0,
-):
-    if t_range is not None:
-        start_idx_before = kinematic_snippet.start_idx
-        kinematic_snippet = kinematic_snippet.get_subselection(*t_range)
-        steps_offset = kinematic_snippet.start_idx - start_idx_before
-    else:
-        steps_offset = 0
-    slice_ = slice(steps_offset, steps_offset + len(kinematic_snippet))
-
-    dt = 1 / kinematic_snippet.data_fps
-    basetraj_sim = sim_results["thorax_pos_inputmatched"][slice_]
-    align_info = traj.align_traj(kinematic_snippet.thorax_pos_mm, basetraj_sim)
-    basetraj_rec = align_info["traj_aligned"]
-    basetraj_sim_filtered, basevelxy_sim = traj.get_denoised_traj_and_vel(
-        basetraj_sim, dt, sg_window_sec=posvelxy_sg_window_sec
-    )
-    basetraj_rec_filtered, basevelxy_rec = traj.get_denoised_traj_and_vel(
-        basetraj_rec, dt, sg_window_sec=posvelxy_sg_window_sec
-    )
-    origin_offset = basetraj_sim[0].copy()
-    basetraj_sim -= origin_offset
-    basetraj_sim_filtered -= origin_offset
-    basetraj_rec -= origin_offset
-    basetraj_rec_filtered -= origin_offset
-
-    baselinspeed_sim, baseheading_sim, baseturnrate_sim = traj.get_egocentric_vel(
-        basetraj_sim,
-        dt,
-        linspeed_sg_window_sec=linspeed_sg_window_sec,
-        turnrate_sg_window_sec=sg_window_turnrate_sec,
-    )
-    baselinspeed_rec, baseheading_rec, baseturnrate_rec = traj.get_egocentric_vel(
-        basetraj_rec,
-        dt,
-        linspeed_sg_window_sec=linspeed_sg_window_sec,
-        turnrate_sg_window_sec=sg_window_turnrate_sec,
-    )
-
-    return {
-        "basetraj_sim": basetraj_sim,
-        "basetraj_sim_filtered": basetraj_sim_filtered,
-        "basevelxy_sim": basevelxy_sim,
-        "baselinspeed_sim": baselinspeed_sim,
-        "baseheading_sim": baseheading_sim,
-        "baseturnrate_sim": baseturnrate_sim,
-        "basetraj_rec": basetraj_rec,
-        "basetraj_rec_filtered": basetraj_rec_filtered,
-        "basevelxy_rec": basevelxy_rec,
-        "baselinspeed_rec": baselinspeed_rec,
-        "baseheading_rec": baseheading_rec,
-        "baseturnrate_rec": baseturnrate_rec,
-        "steps_offset": steps_offset,
-        "slice": slice_,
-        "origin_offset": origin_offset,
-    }
 
 
 def plot_trajectory(

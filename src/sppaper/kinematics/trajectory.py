@@ -83,6 +83,20 @@ def align_traj(traj, traj_ref, anchor_origin: bool = True):
     return {"R": R, "t": t, "traj_aligned": traj_aligned, "metrics": metrics}
 
 
+def inv_align_traj(traj, R, t) -> np.ndarray:
+    """Undo the rigid transformation fitted by align_traj.
+    
+    Args:
+        traj: (L, 2) array, trajectory to transform back.
+        R: (2, 2) rotation matrix from align_traj.
+        t: (2,) translation vector from align_traj.
+    
+    Returns:
+        traj_inv_aligned: (L, 2) array, trajectory transformed back to original space.
+    """
+    return (traj - t) @ R
+
+
 def window_size_sec2steps(size_sec, dt, ensure_odd=True):
     """Convert window size from seconds to number of steps.
 

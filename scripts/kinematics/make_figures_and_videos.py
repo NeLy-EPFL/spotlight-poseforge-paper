@@ -1,6 +1,7 @@
 import pickle
 
-import sppaper.kinematics.visualize as viz
+from sppaper.kinematics.data import align_smooth_decompose_trajectories
+from sppaper.kinematics.visualize import plot_time_series, plot_trajectory
 from sppaper.common.resources import get_outputs_dir
 
 KIN_FILTER_WINDOW_SIZE = 3
@@ -36,16 +37,16 @@ sim_results = data["sim_results"]
 kinematic_snippet = data["snippet"]
 
 # Generate time series figure
-fig, axes = viz.plot_time_series(
+fig, axes = plot_time_series(
     kinematic_snippet, sim_results, leg="lf", t_range=VISUALIZED_SIM_TIMERANGE
 )
 fig.savefig(VIZ_OUTPUT_DIR / "time_series_lf.pdf")
 
 # Generate trajectory comparison figure
-trajs_info = viz.align_smooth_decompose_trajectories(
+trajs_info = align_smooth_decompose_trajectories(
     kinematic_snippet, sim_results, t_range=VISUALIZED_SIM_TIMERANGE
 )
-fig, axes = viz.plot_trajectory(
+fig, axes = plot_trajectory(
     kinematic_snippet, trajs_info, t_range=VISUALIZED_SIM_TIMERANGE
 )
 fig.savefig(VIZ_OUTPUT_DIR / "trajectory_lf.pdf", dpi=300)
