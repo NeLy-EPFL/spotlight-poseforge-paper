@@ -1,3 +1,7 @@
+from sppaper.common.plot import setup_matplotlib_params
+
+setup_matplotlib_params()
+
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec

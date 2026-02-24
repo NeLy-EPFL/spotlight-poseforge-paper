@@ -278,37 +278,6 @@ class NeuroMechFlyReplayInstance:
             contact_normals_hist[step, :, :] = ground_contact_info[4]
             contact_tangents_hist[step, :, :] = ground_contact_info[5]
 
-            # # window_pos = [lifor li in body_pos_hist_li[-pos_window_steps:]]
-            # pos_filt = window_pos.mean(axis=0)
-
-            # heading_window_pos = np.stack(
-            #     body_pos_hist_li[-heading_window_steps:], axis=0
-            # )[:, thorax_idx, :2]
-            # if heading_window_pos.shape[0] >= 2:
-            #     diffs = np.diff(heading_window_pos, axis=0)
-            #     speeds = np.linalg.norm(diffs, axis=1)
-            #     valid = speeds > 1e-6
-            #     if np.any(valid):
-            #         headings = np.arctan2(diffs[valid, 1], diffs[valid, 0])
-            #         sin_mean = np.sin(headings).mean()
-            #         cos_mean = np.cos(headings).mean()
-            #         heading_filt = float(np.arctan2(sin_mean, cos_mean))
-            #         last_heading = heading_filt
-            #     else:
-            #         heading_filt = last_heading
-            # else:
-            #     heading_filt = last_heading
-
-            # self.sim.mj_data.mocap_pos[bottomcam_mocap_id, 0] = pos_filt[0]
-            # self.sim.mj_data.mocap_pos[bottomcam_mocap_id, 1] = pos_filt[1]
-            # self.sim.mj_data.mocap_pos[bottomcam_mocap_id, 2] = 0.0
-
-            # half_heading = 0.5 * heading_filt
-            # cam_body_quat = np.array(
-            #     [np.cos(half_heading), 0.0, 0.0, np.sin(half_heading)]
-            # )
-            # self.sim.mj_data.mocap_quat[bottomcam_mocap_id, :] = cam_body_quat
-
             self.sim.render_as_needed()
 
         sim_results = self._postprocess_replay_results(
@@ -461,55 +430,3 @@ def _vec_local2global(vec_local, frameaxis1, frameaxis2):
 
     vec_world[~nanmask, :] = vec_world_nonan
     return vec_world.reshape(input_dim)
-
-
-def headings_to_bottomcam_rotmats(heading, look="up", eps=1e-12):
-    """
-    heading: (N,) roll angle in radians around the view axis.
-             (If you're looking up/down, this controls image rotation.)
-
-    look: "up"  -> camera looks toward world +Z
-          "down"-> camera looks toward world -Z
-
-    Returns:
-      R: (N,3,3) columns are camera (+X right, +Y up, +Z back) in WORLD coords.
-         MuJoCo camera looks along -Z.
-    """
-    heading = np.asarray(heading, dtype=float)
-    c = np.cos(heading)
-    s = np.sin(heading)
-    N = heading.shape[0]
-
-    # Desired view direction in world
-    if look == "up":
-        v = np.tile(np.array([0.0, 0.0, 1.0]), (N, 1))  # (N,3)
-    elif look == "down":
-        v = np.tile(np.array([0.0, 0.0, -1.0]), (N, 1))
-    else:
-        raise ValueError("look must be 'up' or 'down'")
-
-    # Camera +Z axis points "back", and camera looks along -Z
-    z = -v  # (N,3)
-
-    # Pick a reference "image up" when heading=0.
-    # For v = +Z, using world +Y as image-up is natural.
-    y0 = np.tile(np.array([0.0, 1.0, 0.0]), (N, 1))
-
-    # Ensure y0 is orthogonal to z (it is for v along ±Z), but keep it robust:
-    y0 = y0 - np.sum(y0 * z, axis=1, keepdims=True) * z
-    y0_norm = np.linalg.norm(y0, axis=1, keepdims=True)
-    if np.any(y0_norm < eps):
-        raise ValueError("Degenerate reference up vector; choose a different y0.")
-    y0 = y0 / y0_norm
-
-    # Base right axis
-    x0 = np.cross(y0, z)
-    x0 = x0 / (np.linalg.norm(x0, axis=1, keepdims=True) + eps)
-
-    # Now roll x0,y0 around the view axis v by heading:
-    # Since v is ±Z_world, this is just a 2D rotation in the x0-y0 plane:
-    x = c[:, None] * x0 + s[:, None] * y0
-    y = -s[:, None] * x0 + c[:, None] * y0
-
-    R = np.stack([x, y, z], axis=2)  # (N,3,3)
-    return R

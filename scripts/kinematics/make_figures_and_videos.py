@@ -1,18 +1,5 @@
-import numpy as np
-import polars as pl
-import h5py
-import matplotlib.pyplot as plt
-import matplotlib.gridspec as gridspec
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-import seaborn as sns
-import cmasher
 import pickle
-from scipy.signal import savgol_filter, medfilt
 
-from flygym.anatomy import LEGS
-
-import sppaper.kinematics.shared_constants as const
-import sppaper.kinematics.trajectory as traj
 import sppaper.kinematics.visualize as viz
 from sppaper.common.resources import get_outputs_dir
 
