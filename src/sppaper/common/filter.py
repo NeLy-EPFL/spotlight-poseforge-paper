@@ -58,3 +58,28 @@ def median_filter_over_time(x: _np.ndarray, k: int) -> _np.ndarray:
 
     filter_size = (k,) + (1,) * (x.ndim - 1)
     return _median_filter(x, size=filter_size)
+
+def ratelim_filter_over_time(x: _np.ndarray, ratelim: float) -> _np.ndarray:
+    """Apply a rate-limiting (slew rate) filter along axis 0.
+
+    Each output value is clipped so that the change from the previous
+    output cannot exceed `max_diff` in absolute value. This is a causal
+    forward pass; combine with a reverse pass for zero-phase behavior.
+
+    Args:
+        x: Input array of shape (n, ...).
+        ratelim: Maximum allowed change between consecutive samples along axis 0.
+
+    Returns:
+        Rate-limited array with same shape as x.
+    """
+    x = _np.asarray(x, dtype=float)
+    if ratelim <= 0:
+        raise ValueError(f"ratelim must be positive, got {ratelim}")
+
+    out = x.copy()
+    for i in range(1, x.shape[0]):
+        delta = out[i] - out[i - 1]
+        out[i] = out[i - 1] + _np.clip(delta, -ratelim, ratelim)
+
+    return out

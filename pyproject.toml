@@ -27,7 +27,7 @@ dependencies = [
     "opencv-python>=4.12,<5",
     "av>=16,<17",
     "plotly>=6.5,<7",
-    "poseforge",
+    #"poseforge",
     "spotlight-tools",
     "flygym",
 ]
