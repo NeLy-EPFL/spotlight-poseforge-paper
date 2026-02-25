@@ -1,14 +1,11 @@
 import pickle
 
 from sppaper.kinematics.shared_constants import DATA_FPS
-from sppaper.common.resources import get_poseforge_datadir, get_outputs_dir
+from sppaper.common.resources import get_inputs_dir, get_outputs_dir
 from sppaper.kinematics.data import KinematicsDataset
 from sppaper.kinematics.nmf_sim import NeuroMechFlyReplayManager
 
-KPT_3D_OUTPUT_BASEDIR = (
-    get_poseforge_datadir()
-    / "pose_estimation/keypoints3d/trial_20251118a/production/epoch19_step9167/"
-)
+POSEFORGE_OUTPUT_DIRS = get_inputs_dir().glob("spotlight_trials/*/poseforge_output/")
 REPLAY_OUTPUT_BASEDIR = get_outputs_dir() / "neuromechfly_replay/"
 MIN_XY_CONF = 0.58
 MASK_DENOISE_KERNEL_SIZE_SEC = 0.1
@@ -26,7 +23,7 @@ replay_output_dir = (
 replay_output_dir.mkdir(parents=True, exist_ok=True)
 
 invkin_dataset = KinematicsDataset(
-    keypoints3d_output_dir=KPT_3D_OUTPUT_BASEDIR,
+    poseforge_output_dirs=POSEFORGE_OUTPUT_DIRS,
     min_xy_conf=MIN_XY_CONF,
     mask_denoise_kernel_size_sec=MASK_DENOISE_KERNEL_SIZE_SEC,
     min_duration_sec=MIN_DURATION_SEC,
@@ -44,7 +41,7 @@ for i, invkin_snippet in enumerate(invkin_dataset):
     # Use snippet 21 for testing and visualization for now
     if i != 21:
         continue
-    
+
     print(f"Replaying snippet {i+1}/{len(invkin_dataset)}")
     sim_results = replay_instance.replay_invkin_snippet(invkin_snippet)
     my_outdir = replay_output_dir / f"snippet{i}/"

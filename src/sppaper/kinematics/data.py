@@ -7,6 +7,8 @@ from scipy.interpolate import interp1d
 
 from spotlight_tools.calibration.mapper import SpotlightPositionMapper
 
+import poseforge.neuromechfly.constants as nmfconst
+
 import sppaper.common.filter as filter
 import sppaper.kinematics.trajectory as traj
 from sppaper.common.resources import get_spotlight_trials_dir
@@ -16,14 +18,14 @@ class KinematicsDataset:
     def __init__(
         self,
         *,
-        keypoints3d_output_dir,
+        poseforge_output_dirs,
         min_xy_conf,
         mask_denoise_kernel_size_sec,
         min_duration_sec,
         data_fps,
     ):
         self.summary_df, self.data_by_idx = _load_poseforge_output(
-            keypoints3d_output_dir=keypoints3d_output_dir,
+            poseforge_output_dirs=poseforge_output_dirs,
             min_xy_conf=min_xy_conf,
             mask_denoise_kernel_size_sec=mask_denoise_kernel_size_sec,
             min_duration_sec=min_duration_sec,
@@ -53,6 +55,7 @@ class KinematicsDataset:
                 end_idx=data["end_idx"],
                 joint_angles=joint_angles_arr,
                 fwdkin_world_xyz=data["fwdkin_world_xyz"],
+                camera_xy=data["camera_xy"],
                 metadata=metadata,
             )
             self._snippets.append(snippet)
@@ -71,6 +74,7 @@ class KinematicsSnippet:
     end_idx: int
     joint_angles: np.ndarray
     fwdkin_world_xyz: np.ndarray
+    camera_xy: np.ndarray
     metadata: dict
 
     def __post_init__(self):
@@ -175,7 +179,7 @@ class KinematicsSnippet:
 
 def _load_poseforge_output(
     *,
-    keypoints3d_output_dir,
+    poseforge_output_dirs,
     min_xy_conf,
     mask_denoise_kernel_size_sec,
     min_duration_sec,
@@ -186,20 +190,19 @@ def _load_poseforge_output(
 
     summary_df_rows = []
     data_by_idx = {}
-    for trial_dir in sorted(keypoints3d_output_dir.iterdir()):
-        with h5py.File(trial_dir / "keypoints3d.h5", "r") as f:
-            raw_world_xyz = f["keypoints_world_xyz"][:]
-            conf_xy = f["keypoints_camera_xy_conf"][:]
-            all_keypoints_order = list(f["keypoints_world_xyz"].attrs["keypoints"])
-        with h5py.File(trial_dir / "inverse_kinematics.h5", "r") as f:
+    for poseforge_output_dir in sorted(poseforge_output_dirs):
+        with h5py.File(poseforge_output_dir / "inverse_kinematics_output.h5", "r") as f:
             fwdkin_world_xyz = f["fwdkin_world_xyz"][:]
             joint_angles = f["joint_angles"][:]
-            keypoints_order_per_leg = list(
-                f["fwdkin_world_xyz"].attrs["keypoint_names_per_leg"]
-            )
+            kpts_order_per_leg = list(f["fwdkin_world_xyz"].attrs["keypoint_names"])
+            dofs_order_per_leg = list(nmfconst.dof_name_lookup_canonical_to_nmf.keys())
             legs_order = list(f["fwdkin_world_xyz"].attrs["legs"])
-            dofs_order_per_leg = list(f["joint_angles"].attrs["dof_names_per_leg"])
-            assert list(f["joint_angles"].attrs["legs"]) == legs_order
+        
+        with h5py.File(poseforge_output_dir / "keypoints3d_prediction.h5", "r") as f:
+            keypoints_camera_xy = f["pred_xy"][:]
+            raw_world_xyz = f["pred_world_xyz"][:]
+            conf_xy = f["conf_xy"][:]
+            all_keypoints_order = list(f.attrs["keypoint_names"])
 
         confmask = conf_xy.mean(axis=1) > min_xy_conf
         confmask_denoised = filter.boolean_majority_filter(
@@ -211,7 +214,7 @@ def _load_poseforge_output(
                 continue
             metadata_cols = {
                 "idx": len(summary_df_rows),
-                "trial": trial_dir.stem,
+                "trial": poseforge_output_dir.parent.stem,
                 "start_idx": np.int32(start),
                 "end_idx": np.int32(end),
                 "duration_s": np.float32((end - start) / data_fps),
@@ -219,6 +222,7 @@ def _load_poseforge_output(
             summary_df_rows.append(metadata_cols)
             data_by_idx[len(summary_df_rows) - 1] = {
                 "world_xyz": raw_world_xyz[start:end].astype(np.float32),
+                "camera_xy": keypoints_camera_xy[start:end].astype(np.float32),
                 "fwdkin_world_xyz": fwdkin_world_xyz[start:end].astype(np.float32),
                 "joint_angles": joint_angles[start:end].astype(np.float32),
                 "mask_denoise_kernel_size_sec": mask_denoise_kernel_size_sec,
@@ -226,7 +230,7 @@ def _load_poseforge_output(
                 "fps": data_fps,
                 "keypoints_order": all_keypoints_order,
                 "legs_order": legs_order,
-                "keypoints_order_per_leg": keypoints_order_per_leg,
+                "keypoints_order_per_leg": kpts_order_per_leg,
                 "dofs_order_per_leg": dofs_order_per_leg,
                 **metadata_cols,
             }
