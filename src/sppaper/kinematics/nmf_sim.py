@@ -191,8 +191,6 @@ class NeuroMechFlyReplayInstance:
         kinematics_snippet: KinematicsSnippet,
         preinterp_medkernel_size: int | None = None,
         preinterp_ratelim: float | None = None,
-        bottomcam_pos_window_sec: float = 0.2,
-        bottomcam_heading_window_sec: float = 0.2,
     ):
         """Replay a kinematic snippet in the simulation.
 
@@ -201,8 +199,6 @@ class NeuroMechFlyReplayInstance:
             preinterp_medkernel_size: Optional median filter kernel size to apply
                 before interpolation.
             preinterp_ratelim: Optional rate limit to apply before interpolation.
-            bottomcam_pos_window_sec: Mean-filter window for bottom camera position.
-            bottomcam_heading_window_sec: Mean-filter window for bottom camera heading.
 
         Returns:
             sim_results: Dictionary containing simulation results.
@@ -241,18 +237,6 @@ class NeuroMechFlyReplayInstance:
         contact_pos_hist = np.full((nsteps_sim, 6, 3), np.nan, dtype=np.float32)
         contact_normals_hist = np.full((nsteps_sim, 6, 3), np.nan, dtype=np.float32)
         contact_tangents_hist = np.full((nsteps_sim, 6, 3), np.nan, dtype=np.float32)
-
-        # Bottom camera setup
-        bottomcam_mocapbody_id = mujoco.mj_name2id(
-            self.sim.mj_model, mujoco.mjtObj.mjOBJ_BODY, "bottom_cam_body"
-        )
-        bottomcam_mocapbody_id = self.sim.mj_model.body_mocapid[bottomcam_mocapbody_id]
-
-        dt_sim = float(self.sim.mj_model.opt.timestep)
-        pos_window_steps = max(1, int(round(bottomcam_pos_window_sec / dt_sim)))
-        heading_window_steps = max(1, int(round(bottomcam_heading_window_sec / dt_sim)))
-        thorax_idx = self.bodysegs_order.index(BodySegment("c_thorax"))
-        last_heading = 0.0
 
         # Run simulation loop
         for step in trange(nsteps_sim):
