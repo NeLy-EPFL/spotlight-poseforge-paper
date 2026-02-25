@@ -2,6 +2,7 @@ import numpy as np
 from tqdm import trange
 
 import mujoco
+from scipy.spatial.transform import Rotation as R
 
 from flygym import assets_dir as flygym_assets_dir
 from flygym import Simulation
@@ -34,9 +35,9 @@ ACTUATOR_TYPE = ActuatorType.POSITION
 NEUTRAL_POSE_FILE = flygym_assets_dir / "model/pose/neutral.yaml"
 SPAWN_POSITION = (0, 0, 0.7)  # mm
 SPAWN_ROTATION = Rotation3D("quat", (1, 0, 0, 0))
-VIDEO_PLAYBACK_SPEED = 0.25
-VIDEO_OUTPUT_FPS = 25
-CAM_RES = 720
+VIDEO_PLAYBACK_SPEED = 0.1
+VIDEO_OUTPUT_FPS = 33
+CAM_RES = 1440
 
 
 class NeuroMechFlyReplayManager:
@@ -91,15 +92,6 @@ class NeuroMechFlyReplayManager:
             neutral_input=neutral_pose,
         )
 
-        # for pos in fly.get_legs_order():
-        #     jointdof = JointDOF(
-        #         BodySegment(f"c_thorax"), BodySegment(f"{pos}_coxa"), RotationAxis.YAW
-        #     )
-        #     joint = fly.jointdof_to_mjcfjoint[jointdof]
-        #     joint.stiffness *=0.8
-        #     actuator = fly.jointdof_to_mjcfactuator_by_type[ACTUATOR_TYPE][jointdof]
-        #     actuator.kp *=0.8
-
         # Add visuals
         fly.colorize()
         tracking_cam = fly.add_tracking_camera(fovy=50)
@@ -118,7 +110,7 @@ class NeuroMechFlyReplayManager:
             name="bottom_cam",
             pos=(0, 0, -100),
             quat=(0, 1, 0, 0),
-            fovy=7,
+            fovy=5,
             mode="trackcom",
             target="nmf/c_thorax",
         )
@@ -237,6 +229,9 @@ class NeuroMechFlyReplayInstance:
         body_pos_hist = np.full(
             (nsteps_sim, len(self.bodysegs_order), 3), np.nan, dtype=np.float32
         )
+        body_rot_hist = np.full(
+            (nsteps_sim, len(self.bodysegs_order), 4), np.nan, dtype=np.float32
+        )
         actuator_forces_hist = np.full(
             (nsteps_sim, len(self.actuated_dofs_order)), np.nan, dtype=np.float32
         )
@@ -265,8 +260,8 @@ class NeuroMechFlyReplayInstance:
             self.sim.set_actuator_inputs(fly_name, ACTUATOR_TYPE, target_angles)
             self.sim.step()
 
-            body_pos = self.sim.get_body_positions(fly_name).copy()
-            body_pos_hist[step, :, :] = body_pos
+            body_pos_hist[step, :, :] = self.sim.get_body_positions(fly_name).copy()
+            body_rot_hist[step, :, :] = self.sim.get_body_rotations(fly_name).copy()
             actuator_forces_hist[step, :] = self.sim.get_actuator_forces(
                 fly_name, ACTUATOR_TYPE
             ).copy()
@@ -282,6 +277,7 @@ class NeuroMechFlyReplayInstance:
 
         sim_results = self._postprocess_replay_results(
             body_pos_hist,
+            body_rot_hist,
             actuator_forces_hist,
             contact_active_hist,
             contact_forces_hist,
@@ -297,6 +293,7 @@ class NeuroMechFlyReplayInstance:
     def _postprocess_replay_results(
         self,
         body_pos_hist,
+        body_rot_hist,
         actuator_forces_hist,
         contact_active_hist,
         contact_forces_hist,
@@ -311,6 +308,13 @@ class NeuroMechFlyReplayInstance:
         thorax_idx = self.bodysegs_order.index(BodySegment("c_thorax"))
         thorax_pos_inputmatched = body_pos_hist[ctrl_update_mask, thorax_idx, :2]
         thorax_pos_inputmatched -= thorax_pos_inputmatched[0, :]
+        thorax_rot_inputmatched = R.from_quat(
+            body_rot_hist[ctrl_update_mask, thorax_idx, :], scalar_first=True
+        )
+        forward_vec_inputmatched = thorax_rot_inputmatched.apply(np.array([1, 0, 0]))
+        heading_inputmatched = np.arctan2(
+            forward_vec_inputmatched[:, 1], forward_vec_inputmatched[:, 0]
+        )
 
         # Forces applied by actuators
         actuator_forces_hist = np.stack(actuator_forces_hist, axis=0)
@@ -339,12 +343,15 @@ class NeuroMechFlyReplayInstance:
 
         sim_results = {
             "body_positions": body_pos_hist,
-            "body_positions_order": self.bodysegs_order,
+            "body_rotations": body_rot_hist,
+            "bodyseg_order": self.bodysegs_order,
             "actuator_forces": actuator_forces_hist,
             "actuated_dofs_order": self.actuated_dofs_order,
             "ctrl_update_mask": ctrl_update_mask,
             "thorax_pos_inputmatched": thorax_pos_inputmatched,
+            "heading_inputmatched": heading_inputmatched,
             "ground_contacts": contact_hist,
+            "sim_timestep": self.sim.mj_model.opt.timestep,
         }
         return sim_results
 

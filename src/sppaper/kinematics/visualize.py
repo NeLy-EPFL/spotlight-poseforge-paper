@@ -7,12 +7,13 @@ import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import seaborn as sns
 import cmasher
+import imageio as iio
 from scipy.signal import medfilt
+from tqdm import trange
 
 from flygym.anatomy import LEGS
 
 import sppaper.kinematics.shared_constants as const
-import sppaper.kinematics.trajectory as traj
 from sppaper.kinematics.data import KinematicsSnippet
 
 KIN_FILTER_WINDOW_SIZE = 3
@@ -36,6 +37,12 @@ LEG_DISP_NAMES = {
 AXIS_DISPLAY_NAMES = {"x": "fore/aft", "y": "med/lat", "z": "height"}
 MM_TO_IN = 1 / 25.4
 
+CLAW_XYZ_COLOR = "#546a76"
+DOF_ANGLES_COLOR = "#a23e48"
+ACTUATOR_FORCES_COLOR = "#689829"
+REC_COLOR = "#546a76"
+SIM_COLOR = "#689829"
+
 
 def reduce_timeseries_sim2rec(ts, ctrl_update_mask, reduce_fn=np.mean, stride=1):
     groupids = np.cumsum(ctrl_update_mask) - 1
@@ -55,9 +62,9 @@ def plot_time_series(
     dof_angles_range=90,
     actuator_forces_range=80,
     contact_force_vmax=8,
-    claw_xyz_color="#546a76",
-    dof_angles_color="#a23e48",
-    actuator_forces_color="#689829",
+    claw_xyz_color=CLAW_XYZ_COLOR,
+    dof_angles_color=DOF_ANGLES_COLOR,
+    actuator_forces_color=ACTUATOR_FORCES_COLOR,
     medkernel_size=const.KIN_MEDFILTER_SIZE,
     ratelim_xyz=const.XYZ_RATELIM,
     ratelim_angles=const.JOINT_ANGLE_RATELIM,
@@ -249,8 +256,8 @@ def plot_trajectory(
     kinematic_snippet: KinematicsSnippet,
     trajs_info: dict,
     t_range=None,
-    rec_color="#546a76",
-    sim_color="#689829",
+    rec_color=REC_COLOR,
+    sim_color=SIM_COLOR,
     xticks_interval=0.5,
 ):
     if t_range is not None:
@@ -363,3 +370,164 @@ def plot_trajectory(
     sns.despine(ax=ax_turnrate)
 
     return fig, (ax_traj, ax_velx, ax_vely, ax_linspeed, ax_turnrate)
+
+
+class TrajectoryVideoPlotter:
+    def __init__(
+        self,
+        xypos_ts,
+        heading_ts,
+        linspeed_ts,
+        turnrate_ts,
+        dt,
+        datacolor="tab:blue",
+        fgcolor="#aaaaaa",
+        extent=20,
+        ylim_margin=0.2,
+        width_px=900,
+        dpi=300,
+    ):
+        self.traj = np.array(xypos_ts)
+        self.heading_ts = heading_ts
+        self.linspeed = np.array(linspeed_ts)
+        self.turnrate = np.array(turnrate_ts) / (2 * np.pi)  # convert to turns/s
+        self.t_grid = np.arange(self.traj.shape[0]) * dt
+
+        self.traj_halfextent = extent / 2
+        self.ylim_margin = ylim_margin
+        self.dpi = dpi
+        self.datacolor = datacolor
+        self.fgcolor = fgcolor
+
+        figsize_px = (width_px, width_px // 2)
+        figsize_in = [x / dpi for x in figsize_px]
+        self.fig = plt.figure(figsize=figsize_in, tight_layout=True, dpi=self.dpi)
+        gs = gridspec.GridSpec(2, 2, figure=self.fig)
+        self.ax_traj = self.fig.add_subplot(gs[:, 0])
+        self.ax_linspeed = self.fig.add_subplot(gs[0, 1])
+        self.ax_turnrate = self.fig.add_subplot(gs[1, 1])
+
+        self._setup()
+
+    def _style_ax(self, ax):
+        ax.set_facecolor((0, 0, 0, 0.5))
+        for spine in ax.spines.values():
+            spine.set_color(self.fgcolor)
+        ax.tick_params(colors=self.fgcolor, labelsize=6)
+
+    def _setup(self):
+        self.fig.patch.set_facecolor((0, 0, 0, 1))
+        self.fig.subplots_adjust(0, 0, 1, 1, wspace=0.3, hspace=0.3)
+
+        # Trajectory axes
+        self.ax_traj.set_aspect("equal")
+        self._style_ax(self.ax_traj)
+        self.ax_traj.set_xticks([])
+        self.ax_traj.set_yticks([])
+        (self.line_past,) = self.ax_traj.plot(
+            [], [], color=self.datacolor, linewidth=1.5
+        )
+        (self.line_future,) = self.ax_traj.plot(
+            [], [], color=self.datacolor, linewidth=0.5, alpha=0.5
+        )
+        (self.dot,) = self.ax_traj.plot(
+            [], [], marker="o", color=self.datacolor, markersize=2, linestyle="none"
+        )
+        self.ax_traj.plot(
+            [-0.9 * self.traj_halfextent, -0.9 * self.traj_halfextent + 2],
+            [-0.87 * self.traj_halfextent, -0.87 * self.traj_halfextent],
+            color=self.fgcolor,
+            linewidth=1,
+        )
+        self.ax_traj.text(
+            -0.9 * self.traj_halfextent + 2.5,
+            -0.87 * self.traj_halfextent,
+            "2 mm",
+            color=self.fgcolor,
+            fontsize=5,
+            va="center",
+            ha="left",
+        )
+        self.ax_traj.set_title("Trajectory", color=self.fgcolor, fontsize=6)
+
+        # Linspeed axes
+        self._style_ax(self.ax_linspeed)
+        self.ax_linspeed.set_xlim(0, self.t_grid[-1])
+        self.ax_linspeed.set_xticklabels([])
+        self.ax_linspeed.set_ylim(0, self.linspeed.max() * (1 + self.ylim_margin))
+        self.ax_linspeed.set_ylabel("(mm/s)", color=self.fgcolor, fontsize=5)
+        (self.ls_past,) = self.ax_linspeed.plot(
+            [], [], color=self.datacolor, linewidth=1.5
+        )
+        (self.ls_future,) = self.ax_linspeed.plot(
+            [], [], color=self.datacolor, linewidth=0.5, alpha=0.5
+        )
+        (self.ls_dot,) = self.ax_linspeed.plot(
+            [], [], marker="o", color=self.datacolor, markersize=2, linestyle="none"
+        )
+        self.ax_linspeed.set_title("Linear Speed", color=self.fgcolor, fontsize=6)
+        sns.despine(ax=self.ax_linspeed)
+
+        # Turnrate axes
+        self._style_ax(self.ax_turnrate)
+        self.ax_turnrate.set_xlim(0, self.t_grid[-1])
+        y_absmax_with_margin = np.max(np.abs(self.turnrate)) * (1 + self.ylim_margin)
+        self.ax_turnrate.set_ylim(-y_absmax_with_margin, y_absmax_with_margin)
+        self.ax_turnrate.set_ylabel("(turns/s)", color=self.fgcolor, fontsize=5)
+        (self.tr_past,) = self.ax_turnrate.plot(
+            [], [], color=self.datacolor, linewidth=1.5
+        )
+        xticklabels = self.ax_turnrate.get_xticklabels()
+        xticklabels[-1].set_text(xticklabels[-1].get_text() + " s")
+        self.ax_turnrate.set_xticks(
+            self.ax_turnrate.get_xticks(), labels=xticklabels, fontsize=5
+        )
+        (self.tr_future,) = self.ax_turnrate.plot(
+            [], [], color=self.datacolor, linewidth=0.5, alpha=0.5
+        )
+        (self.tr_dot,) = self.ax_turnrate.plot(
+            [], [], marker="o", color=self.datacolor, markersize=2, linestyle="none"
+        )
+        self.ax_turnrate.set_title("Turn Rate", color=self.fgcolor, fontsize=6)
+        sns.despine(ax=self.ax_turnrate, bottom=True)
+        self.ax_turnrate.axhline(0, color=self.fgcolor, linewidth=0.75, zorder=-100)
+
+    def _rotate(self, t):
+        angle = np.pi / 2 - self.heading_ts[t]
+        c, s = np.cos(angle), np.sin(angle)
+        R = np.array([[c, -s], [s, c]])
+        return (self.traj - self.traj[t]) @ R.T
+
+    def plot_snapshot(self, t):
+        # Trajectory
+        traj_r = self._rotate(t)
+        cx, cy = traj_r[t]
+        self.line_past.set_data(traj_r[:t, 0], traj_r[:t, 1])
+        self.line_future.set_data(traj_r[t:, 0], traj_r[t:, 1])
+        self.dot.set_data([traj_r[t, 0]], [traj_r[t, 1]])
+        self.ax_traj.set_xlim(cx - self.traj_halfextent, cx + self.traj_halfextent)
+        self.ax_traj.set_ylim(cy - self.traj_halfextent, cy + self.traj_halfextent)
+
+        # Linear speed
+        self.ls_past.set_data(self.t_grid[:t], self.linspeed[:t])
+        self.ls_future.set_data(self.t_grid[t:], self.linspeed[t:])
+        self.ls_dot.set_data([self.t_grid[t]], [self.linspeed[t]])
+
+        # Turn rate
+        self.tr_past.set_data(self.t_grid[:t], self.turnrate[:t])
+        self.tr_future.set_data(self.t_grid[t:], self.turnrate[t:])
+        self.tr_dot.set_data([self.t_grid[t]], [self.turnrate[t]])
+
+        self.fig.canvas.draw()
+        return np.asarray(self.fig.canvas.buffer_rgba())
+
+    def make_video(self, output_path, fps):
+        output_path.parent.mkdir(exist_ok=True, parents=True)
+        with iio.imopen(str(output_path), "w", plugin="pyav") as writer:
+            writer.init_video_stream("h264", fps=fps)
+            for t in trange(len(self.traj)):
+                frame = self.plot_snapshot(t)
+                writer.write_frame(frame[:, :, :3])
+
+    def close(self):
+        plt.close(self.fig)
