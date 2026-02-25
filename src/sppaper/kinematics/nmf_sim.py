@@ -24,6 +24,7 @@ from flygym.anatomy import (
 from flygym.utils.math import Rotation3D
 
 from sppaper.kinematics.data import KinematicsSnippet
+from sppaper.kinematics.shared_constants import VIDEO_OUTPUT_FPS, VIDEO_PLAYBACK_SPEED
 
 # Constants
 PASSIVE_TARSUS_STIFFNESS = 10
@@ -35,8 +36,6 @@ ACTUATOR_TYPE = ActuatorType.POSITION
 NEUTRAL_POSE_FILE = flygym_assets_dir / "model/pose/neutral.yaml"
 SPAWN_POSITION = (0, 0, 0.7)  # mm
 SPAWN_ROTATION = Rotation3D("quat", (1, 0, 0, 0))
-VIDEO_PLAYBACK_SPEED = 0.1
-VIDEO_OUTPUT_FPS = 33
 CAM_RES = 1440
 
 
@@ -67,7 +66,7 @@ class NeuroMechFlyReplayManager:
         joint_damping: float,
         sliding_friction: float,
     ) -> tuple[Simulation, Fly]:
-        fly = Fly(simplify_claw=True)
+        fly = Fly()
         skeleton = Skeleton(axis_order=AXIS_ORDER, joint_preset=ARTICULATED_JOINTS)
         neutral_pose = KinematicPose(path=NEUTRAL_POSE_FILE)
         fly.add_joints(
@@ -94,7 +93,11 @@ class NeuroMechFlyReplayManager:
 
         # Add visuals
         fly.colorize()
-        tracking_cam = fly.add_tracking_camera(fovy=50)
+        tracking_cam = fly.add_tracking_camera(
+            fovy=60,
+            pos_offset=(7.5, 0, 6),
+            rotation=Rotation3D("xyaxes", (0, 1, 0, -0.6, 0, 0.8)),
+        )
         fly.mjcf_root.visual.get_children("global").offwidth = CAM_RES
         fly.mjcf_root.visual.get_children("global").offheight = CAM_RES
 

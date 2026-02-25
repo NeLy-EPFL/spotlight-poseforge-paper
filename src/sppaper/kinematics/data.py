@@ -235,7 +235,7 @@ def _load_poseforge_output(
     return summary_df, data_by_idx
 
 
-def align_smooth_decompose_trajectories(
+def align_smooth_decompose_trajs(
     kinematic_snippet: KinematicsSnippet,
     sim_results: dict,
     t_range=None,
