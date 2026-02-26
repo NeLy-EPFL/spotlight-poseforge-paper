@@ -46,6 +46,8 @@ LEG_DISP_NAMES = {
 }
 AXIS_DISPLAY_NAMES = {"x": "fore/aft", "y": "med/lat", "z": "height"}
 MM_TO_IN = 1 / 25.4
+SWING_SPEED_THRESHOLD = 25
+CONTACT_FORCE_DISP_THRESHOLD = 0
 
 CLAW_XYZ_COLOR = "#546a76"
 DOF_ANGLES_COLOR = "#a23e48"
@@ -66,6 +68,7 @@ def reduce_timeseries_sim2rec(ts, ctrl_update_mask, reduce_fn=np.mean, stride=1)
 def plot_time_series(
     sim_dir,
     leg,
+    gait_info,
     t_range=None,
     claw_xyz_range=1.5,
     dof_angles_range=90,
@@ -75,6 +78,7 @@ def plot_time_series(
     dof_angles_color=DOF_ANGLES_COLOR,
     actuator_forces_color=ACTUATOR_FORCES_COLOR,
     medkernel_size=const.KIN_MEDFILTER_SIZE,
+    contact_force_disp_threshold=CONTACT_FORCE_DISP_THRESHOLD,
     ratelim_xyz=const.XYZ_RATELIM,
     ratelim_angles=const.JOINT_ANGLE_RATELIM,
     xticks_interval=0.5,
@@ -101,10 +105,10 @@ def plot_time_series(
 
     i_leg = kinematic_snippet.metadata["legs_order"].index(leg.upper())
     fig, axes = plt.subplots(
-        4,
+        5,
         1,
-        figsize=(100 * MM_TO_IN, 100 * MM_TO_IN),
-        gridspec_kw={"height_ratios": [2, 3, 3, 3]},
+        figsize=(100 * MM_TO_IN, 120 * MM_TO_IN),
+        gridspec_kw={"height_ratios": [2, 3, 3, 3, 3]},
         tight_layout=True,
     )
 
@@ -136,7 +140,12 @@ def plot_time_series(
 
     # Add scale bar
     ax.plot(
-        [t_grid[-1] * 1.02] * 2, [0.2, 1.2], color="black", linewidth=1, clip_on=False
+        [t_grid[-1] * 1.02] * 2,
+        [0.2, 1.2],
+        color="black",
+        linewidth=1,
+        clip_on=False,
+        solid_capstyle="butt",
     )
     ax.text(t_grid[-1] * 1.03, 0.7, "1 mm", va="center", ha="left", fontsize="small")
 
@@ -179,6 +188,7 @@ def plot_time_series(
         color="black",
         linewidth=1,
         clip_on=False,
+        solid_capstyle="butt",
     )
     ax.text(t_grid[-1] * 1.03, 52.5, "45°", va="center", ha="left", fontsize="small")
 
@@ -193,11 +203,27 @@ def plot_time_series(
     ax.set_xticks(xticks, xticklabels)
     ax.set_xlim(t_grid[0], t_grid[-1] + 1 / kinematic_snippet.data_fps)
 
+    # ===== Gait diagram =====
+    ax = axes[2]
+    ax.imshow(
+        np.repeat(~gait_info["swing_mask"].T, axis=0, repeats=50),
+        aspect="auto",
+        interpolation="none",
+        extent=[0, t_range[1] - t_range[0], 6, 0],
+        cmap="gray",
+    )
+    leg_disp_names = [x.upper() for x in LEGS]
+    ax.set_yticks(np.arange(6) + 0.5, leg_disp_names)
+    ax.set_ylabel("Gait diagram", color="black")
+    ax.yaxis.set_label_coords(-0.13, 0.5)
+    ax.set_xticks(xticks, xticklabels)
+    ax.set_xlabel("Time (s)")
+
     # ===== Actuator force =====
+    ax = axes[3]
+    sns.despine(ax=ax)
     yticks = []
     yticklabels = []
-    ax = axes[2]
-    sns.despine(ax=ax)
     for i_dof, dof in enumerate(kinematic_snippet.metadata["dofs_order_per_leg"]):
         idx = kinematic_snippet.metadata["joints_order"].index(f"{leg.upper()}{dof}")
         ts = reduce_timeseries_sim2rec(
@@ -220,12 +246,13 @@ def plot_time_series(
     # Add scale bar
     ax.plot(
         [t_grid[-1] * 1.02] * 2,
-        [-5, 15],
+        [-5, 35],
         color="black",
         linewidth=1,
         clip_on=False,
+        solid_capstyle="butt",
     )
-    ax.text(t_grid[-1] * 1.03, 5, "20 μN", va="center", ha="left", fontsize="small")
+    ax.text(t_grid[-1] * 1.03, 15, "40 μN", va="center", ha="left", fontsize="small")
 
     # Configure y axis
     ax.set_ylim(6.5 * actuator_forces_range, -0.5 * actuator_forces_range)
@@ -238,7 +265,7 @@ def plot_time_series(
     ax.set_xlim(t_grid[0], t_grid[-1] + 1 / kinematic_snippet.data_fps)
 
     # ===== Load by leg =====
-    ax = axes[3]
+    ax = axes[4]
     ts = sim_results["ground_contacts"]["forces_world"][steps_offset:, :, 2].copy() * -1
     ts[np.isnan(ts)] = 0
     ts = reduce_timeseries_sim2rec(
@@ -248,7 +275,7 @@ def plot_time_series(
         np.repeat(ts.T, axis=0, repeats=50),
         aspect="auto",
         interpolation="none",
-        extent=[t_grid[0], t_grid[-1] + 1 / kinematic_snippet.data_fps, 5.5, -0.5],
+        extent=[t_grid[0], t_grid[-1] + 1 / kinematic_snippet.data_fps, 6, 0],
         vmin=0,
         vmax=contact_force_vmax,
         cmap=cmasher.lavender,
@@ -257,7 +284,7 @@ def plot_time_series(
     cbar = fig.colorbar(im, cax=cax)
     cbar.set_ticks([0, 4, 8], labels=["0", "4", "8 μN"])
     leg_disp_names = [x.upper() for x in LEGS]
-    ax.set_yticks(np.arange(6), leg_disp_names)
+    ax.set_yticks(np.arange(6) + 0.5, leg_disp_names)
     ax.set_ylabel("Weight load by leg", color="black")
     ax.yaxis.set_label_coords(-0.13, 0.5)
     ax.set_xticks(xticks, xticklabels)
@@ -900,5 +927,75 @@ def plot_invkin_frame(
         )
     ax.set_aspect("equal")
     ax.view_init(elev=40, azim=25)
+
+    return fig, ax
+
+
+def plot_claw_traj_by_swing_stance(sim_dir, gait_info, t_range=None):
+    with open(sim_dir / "sim_data.pkl", "rb") as f:
+        data = pickle.load(f)
+        kinematic_snippet = data["snippet"]
+        sim_results = data["sim_results"]
+
+    traj_align_transform = align_smooth_decompose_trajs(
+        kinematic_snippet, sim_results, t_range=t_range
+    )["rec_traj_alignment_transform"]
+    rot_mat = traj_align_transform["R"]
+    translation = traj_align_transform["t"]
+
+    claw_xypos = gait_info["claw_xypos_arena"]
+    swing_mask = gait_info["swing_mask"]
+    claw_xypos = np.einsum("ij,tnj->tni", rot_mat, claw_xypos) + translation
+    claw_xypos_stance_only = claw_xypos.copy()
+    claw_xypos_stance_only[swing_mask] = np.nan
+
+    fig, ax = plt.subplots(figsize=(3, 3), tight_layout=True)
+    for i in range(6):
+        ax.plot(
+            claw_xypos[:, i, 0],
+            claw_xypos[:, i, 1],
+            linewidth=1,
+            color="#546a76",
+            label="Swing" if i == 0 else None,
+        )
+        ax.plot(
+            claw_xypos_stance_only[:, i, 0],
+            claw_xypos_stance_only[:, i, 1],
+            linewidth=1,
+            color="#a23e48",
+            zorder=10,
+            label="Stance" if i == 0 else None,
+        )
+
+    xlim = ax.get_xlim()
+    ylim = ax.get_ylim()
+    scalebar_x0 = xlim[1] + 0.05 * (xlim[1] - xlim[0])
+    scalebar_y = ylim[0] + 0.05 * (ylim[1] - ylim[0])
+    ax.plot(
+        [scalebar_x0, scalebar_x0 + 1],
+        [scalebar_y] * 2,
+        color="black",
+        linewidth=2,
+        clip_on=False,
+        solid_capstyle="butt",
+    )
+    ax.text(
+        scalebar_x0 + 1.5,
+        scalebar_y,
+        "1 mm",
+        color="black",
+        fontsize=5,
+        va="center",
+        clip_on=False,
+    )
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    ax.legend(bbox_to_anchor=(1.04, 1), loc="upper left")
+    ax.set_aspect("equal")
+    ax.set_title("Claw trajectories in arena")
+    ax.set_xlabel("x (mm)")
+    ax.set_ylabel("y (mm)")
 
     return fig, ax

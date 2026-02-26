@@ -1,15 +1,24 @@
+import pickle
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import polars as pl
 import h5py
 from scipy.interpolate import interp1d
+from scipy.signal import savgol_filter
 
 from spotlight_tools.calibration.mapper import SpotlightPositionMapper
 
 import sppaper.common.filter as filter
 import sppaper.kinematics.trajectory as traj
 from sppaper.common.resources import get_spotlight_trials_dir
+
+POSE_WORKING_DIM = 256
+RAW_INPUT_CROP_DIM = 900
+SWING_SPEED_THR = 25  # mm/s
+SWING_SPEED_SG_WINDOW = 7
+SWING_MASK_MEDFILTER_WINDOW = 5
 
 
 class KinematicsDataset:
@@ -302,4 +311,107 @@ def align_smooth_decompose_trajs(
         "slice": slice_,
         "origin_offset": origin_offset,
         "rec_traj_alignment_transform": align_info,
+    }
+
+
+def undo_poseforge_input_transform(
+    xy_posttransform: np.ndarray, transform_matrices: np.ndarray
+) -> np.ndarray:
+    """
+    Reverses affine transforms applied to 2D point coordinates.
+
+    Args:
+        xy_posttransform:   (n_frames, ..., 2) — transformed coordinates
+        transform_matrices: (n_frames, 2, 3)   — affine matrices that were applied
+
+    Returns:
+        xy_pretransform: (n_frames, ..., 2) — recovered original coordinates
+    """
+    n_frames = xy_posttransform.shape[0]
+    original_shape = xy_posttransform.shape
+
+    # Flatten all middle dims into a single n_points dimension
+    xy_flat = xy_posttransform.reshape(n_frames, -1, 2)  # (n_frames, n_points, 2)
+
+    # Promote each 2x3 matrix to a full 3x3 affine matrix by appending [0, 0, 1]
+    bottom_row = np.tile(
+        np.array([[[0.0, 0.0, 1.0]]]), (n_frames, 1, 1)
+    )  # (n_frames, 1, 3)
+    M_3x3 = np.concatenate([transform_matrices, bottom_row], axis=1)  # (n_frames, 3, 3)
+
+    # Invert all matrices at once
+    M_inv = np.linalg.inv(M_3x3)  # (n_frames, 3, 3)
+
+    # Convert points to homogeneous coordinates: (n_frames, n_points, 3)
+    ones = np.ones((*xy_flat.shape[:2], 1))
+    xy_homogeneous = np.concatenate([xy_flat, ones], axis=-1)
+
+    # Apply inverse transform: einsum over (frame, point, coord)
+    xy_pretransform = np.einsum("fij,fpj->fpi", M_inv, xy_homogeneous)
+
+    # Drop the homogeneous coordinate and restore the original shape
+    return xy_pretransform[..., :2].reshape(original_shape)
+
+
+def get_coords_arena_mm(kinematic_snippet):
+    slice_ = slice(kinematic_snippet.start_idx, kinematic_snippet.end_idx)
+
+    poseforge_output_dir = kinematic_snippet.exp_trial_dir / "poseforge_output"
+    with h5py.File(poseforge_output_dir / "inverse_kinematics_output.h5", "r") as f:
+        raw_world_xyz = f["rawpred_world_xyz"][slice_, :30, :].reshape(-1, 6, 5, 3)
+        fwdkin_world_xyz = f["fwdkin_world_xyz"][slice_, :30, :].reshape(-1, 6, 5, 3)
+    with h5py.File(poseforge_output_dir / "keypoints3d_prediction.h5", "r") as f:
+        cam_xy_px = f["pred_xy"][slice_, :30, :].reshape(-1, 6, 5, 2)
+    assert raw_world_xyz.shape[0] == len(kinematic_snippet)
+    assert cam_xy_px.shape[0] == len(kinematic_snippet)
+    assert fwdkin_world_xyz.shape[0] == len(kinematic_snippet)
+
+    # Image was downsampled before given as input to neural network. Scale output px
+    # coords back up to original input image scale
+    cam_xy_px *= RAW_INPUT_CROP_DIM / POSE_WORKING_DIM
+    # ... then undo alignment and cropping
+    crop_transmats = kinematic_snippet.crop_transmats
+    cam_xy_px_pretransform = undo_poseforge_input_transform(cam_xy_px, crop_transmats)
+
+    mapper = kinematic_snippet.spotlight_coords_mapper
+    stage_pos_mm_expanded = np.tile(
+        kinematic_snippet.stage_pos_mm[:, None, None, :], (1, 6, 5, 1)
+    )
+    xypos_arena = mapper.stage_and_pixel_to_physical(
+        stage_pos_mm_expanded, cam_xy_px_pretransform
+    )
+
+    return xypos_arena
+
+
+def get_gait_info(
+    sim_dir: Path,
+    t_range: tuple[float, float] | None = None,
+    swing_speed_thr=SWING_SPEED_THR,
+    swing_speed_sg_window=SWING_SPEED_SG_WINDOW,
+    swing_mask_medfilter_window=SWING_MASK_MEDFILTER_WINDOW,
+):
+    with open(sim_dir / "sim_data.pkl", "rb") as f:
+        data = pickle.load(f)
+        kinematic_snippet = data["snippet"]
+    if t_range is not None:
+        kinematic_snippet = kinematic_snippet.get_subselection(*t_range)
+
+    kpts_xypos_arena = get_coords_arena_mm(kinematic_snippet)
+    # kpts_xypos_arena: (n_frames, 6 legs, 5 kpts per leg, {x,y})
+    claw_xypos_arena = kpts_xypos_arena[:, :, -1, :]
+
+    dt = 1 / kinematic_snippet.data_fps
+    claw_xyvel_arena = savgol_filter(
+        claw_xypos_arena, swing_speed_sg_window, deriv=1, polyorder=2, delta=dt, axis=0
+    )
+    claw_speed = np.linalg.norm(claw_xyvel_arena, axis=-1)
+    swing_mask = claw_speed > swing_speed_thr
+
+    swing_mask = filter.median_filter_over_time(swing_mask, swing_mask_medfilter_window)
+
+    return {
+        "swing_mask": swing_mask,
+        "claw_xypos_arena": claw_xypos_arena,
+        "claw_speed": claw_speed,
     }

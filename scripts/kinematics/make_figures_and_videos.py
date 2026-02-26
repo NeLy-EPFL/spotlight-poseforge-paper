@@ -1,11 +1,14 @@
 import pickle
 
+import sppaper.kinematics.visualize as viz
+from sppaper.kinematics.data import get_gait_info
 from sppaper.common.resources import get_outputs_dir
 from sppaper.kinematics.visualize import (
     plot_time_series,
     plot_trajectory,
     make_replay_video,
     plot_invkin_frame,
+    plot_claw_traj_by_swing_stance,
 )
 
 KIN_FILTER_WINDOW_SIZE = 3
@@ -43,10 +46,20 @@ with open(VISUALIZED_SIM_DIR / "sim_data.pkl", "rb") as f:
 sim_results = data["sim_results"]
 kinematic_snippet = data["snippet"]
 
+# Plot gait diagram and claw trajectory colored by swing/stance
+gait_info = get_gait_info(VISUALIZED_SIM_DIR, t_range=VISUALIZED_SIM_TIMERANGE)
+fig, ax = viz.plot_claw_traj_by_swing_stance(
+    VISUALIZED_SIM_DIR, gait_info, t_range=VISUALIZED_SIM_TIMERANGE
+)
+fig.savefig(VIZ_OUTPUT_DIR / "claw_traj_by_swing_stance.pdf")
+
 # Generate time series figure
 print("Generating time series figure...")
 fig, axes = plot_time_series(
-    sim_dir=VISUALIZED_SIM_DIR, leg="lf", t_range=VISUALIZED_SIM_TIMERANGE
+    sim_dir=VISUALIZED_SIM_DIR,
+    leg="lf",
+    gait_info=gait_info,
+    t_range=VISUALIZED_SIM_TIMERANGE,
 )
 fig.savefig(VIZ_OUTPUT_DIR / "time_series_lf.pdf")
 
@@ -57,11 +70,6 @@ fig, axes = plot_trajectory(
 )
 fig.savefig(VIZ_OUTPUT_DIR / "trajectory_lf.pdf", dpi=300)
 
-# Generate a single snapshot of forward kinematics visualization for figures
-print("Generating forward kinematics snapshot figure...")
-fig, ax = plot_invkin_frame(VISUALIZED_SIM_DIR, FWDKIN_SNAPSHOT_FULLREC_FRAMEID)
-fig.savefig(VIZ_OUTPUT_DIR / "forward_kinematics_snapshot.pdf")
-
 # Generate kinematic replay side-by-side video
 print("Generating replay video...")
 make_replay_video(
@@ -71,3 +79,8 @@ make_replay_video(
     final_output_playback_speed=0.2,
     coarse_frames_interval=50,
 )
+
+# Generate a single snapshot of forward kinematics visualization for figures
+print("Generating forward kinematics snapshot figure...")
+fig, ax = plot_invkin_frame(VISUALIZED_SIM_DIR, FWDKIN_SNAPSHOT_FULLREC_FRAMEID)
+fig.savefig(VIZ_OUTPUT_DIR / "forward_kinematics_snapshot.pdf")
