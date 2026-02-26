@@ -72,12 +72,12 @@ print("Generating forward kinematics snapshot figure...")
 fig, ax = plot_invkin_frame(VISUALIZED_SIM_DIR, FWDKIN_SNAPSHOT_FULLREC_FRAMEID)
 fig.savefig(VIZ_OUTPUT_DIR / "forward_kinematics_snapshot.pdf")
 
-# # Generate kinematic replay side-by-side video
-# print("Generating replay video...")
-# make_replay_video(
-#     sim_dir=VISUALIZED_SIM_DIR,
-#     output_path=VIZ_OUTPUT_DIR / "nmf_replay_summary.mp4",
-#     t_range=VISUALIZED_SIM_TIMERANGE,
-#     final_output_playback_speed=0.2,
-#     coarse_frames_interval=50,
-# )
+# Generate kinematic replay side-by-side video
+print("Generating replay video...")
+make_replay_video(
+    sim_dir=VISUALIZED_SIM_DIR,
+    output_path=VIZ_OUTPUT_DIR / "nmf_replay_summary.mp4",
+    t_range=VISUALIZED_SIM_TIMERANGE,
+    final_output_playback_speed=0.2,
+    coarse_frames_interval=50,
+)
