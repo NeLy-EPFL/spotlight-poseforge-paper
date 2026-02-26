@@ -53,6 +53,7 @@ class KinematicsDataset:
                 end_idx=data["end_idx"],
                 joint_angles=joint_angles_arr,
                 fwdkin_world_xyz=data["fwdkin_world_xyz"],
+                cam_xy=data["cam_xy"],
                 metadata=metadata,
             )
             self._snippets.append(snippet)
@@ -71,6 +72,7 @@ class KinematicsSnippet:
     end_idx: int
     joint_angles: np.ndarray
     fwdkin_world_xyz: np.ndarray
+    cam_xy: np.ndarray
     metadata: dict
 
     def __post_init__(self):
@@ -89,6 +91,7 @@ class KinematicsSnippet:
             kpts_xy = f["keypoints_xy_pre_alignment"][self.start_idx : self.end_idx]
             self.thorax_pos_px = kpts_xy[:, thorax_idx, :]
             self.neck_pos_px = kpts_xy[:, neck_idx, :]
+            self.crop_transmats = f["transform_matrices"][self.start_idx : self.end_idx]
 
         # Set up mapper to convert from (translation stage pos, pixel coords) to
         # physical coordinates in the arena
@@ -102,17 +105,16 @@ class KinematicsSnippet:
         )
         frame_metadata = pl.read_csv(beh_frame_metadata_file)
         frame_metadata = frame_metadata[self.start_idx : self.end_idx]
-        stage_pos_mm = frame_metadata.select(
-            "x_pos_mm_interp", "y_pos_mm_interp"
-        ).to_numpy()
+        cols = ["x_pos_mm_interp", "y_pos_mm_interp"]
+        self.stage_pos_mm = frame_metadata.select(cols).to_numpy()
 
         # Load camera calibration parameters and map
         # (translation stage pos, pixel corrds) to physical coordinates in the arena
         self.thorax_pos_mm = self.spotlight_coords_mapper.stage_and_pixel_to_physical(
-            stage_pos_mm, self.thorax_pos_px
+            self.stage_pos_mm, self.thorax_pos_px
         )
         self.neck_pos_mm = self.spotlight_coords_mapper.stage_and_pixel_to_physical(
-            stage_pos_mm, self.neck_pos_px
+            self.stage_pos_mm, self.neck_pos_px
         )
 
     def get_subselection(self, start_sec, end_sec) -> "KinematicsSnippet":
@@ -128,6 +130,7 @@ class KinematicsSnippet:
             end_idx=self.start_idx + end_idx,
             joint_angles=self.joint_angles[start_idx:end_idx],
             fwdkin_world_xyz=self.fwdkin_world_xyz[start_idx:end_idx],
+            cam_xy=self.cam_xy[start_idx:end_idx],
             metadata=self.metadata,
         )
 
@@ -189,6 +192,7 @@ def _load_poseforge_output(
     for trial_dir in sorted(keypoints3d_output_dir.iterdir()):
         with h5py.File(trial_dir / "keypoints3d.h5", "r") as f:
             raw_world_xyz = f["keypoints_world_xyz"][:]
+            cam_xy = f["keypoints_camera_xy"][:]
             conf_xy = f["keypoints_camera_xy_conf"][:]
             all_keypoints_order = list(f["keypoints_world_xyz"].attrs["keypoints"])
         with h5py.File(trial_dir / "inverse_kinematics.h5", "r") as f:
@@ -219,6 +223,7 @@ def _load_poseforge_output(
             summary_df_rows.append(metadata_cols)
             data_by_idx[len(summary_df_rows) - 1] = {
                 "world_xyz": raw_world_xyz[start:end].astype(np.float32),
+                "cam_xy": cam_xy[start:end].astype(np.float32),
                 "fwdkin_world_xyz": fwdkin_world_xyz[start:end].astype(np.float32),
                 "joint_angles": joint_angles[start:end].astype(np.float32),
                 "mask_denoise_kernel_size_sec": mask_denoise_kernel_size_sec,

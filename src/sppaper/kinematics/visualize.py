@@ -774,7 +774,7 @@ def make_replay_video(
     ) * intermediate_video_output_fps
     writer.init_video_stream("h264", fps=final_output_fps)
 
-    # ...
+    # Save a few frames without text overlay for figure making, etc.
     if coarse_frames_interval is not None:
         coarse_frames_dir = output_path.parent / f"{output_path.stem}_coarse_frames"
         coarse_frames_dir.mkdir(exist_ok=True)
