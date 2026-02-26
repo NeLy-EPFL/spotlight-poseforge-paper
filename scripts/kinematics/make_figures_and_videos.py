@@ -1,6 +1,5 @@
 import pickle
 
-import sppaper.kinematics.visualize as viz
 from sppaper.kinematics.data import get_gait_info
 from sppaper.common.resources import get_outputs_dir
 from sppaper.kinematics.visualize import (
@@ -31,9 +30,7 @@ LEG_DISP_NAMES = {
 }
 AXIS_DISPLAY_NAMES = {"x": "fore/aft", "y": "med/lat", "z": "height"}
 
-VISUALIZED_SIM_DIR = (
-    get_outputs_dir() / "neuromechfly_replay/kp150_damp0.5_slidfric2.0/snippet21/"
-)
+VISUALIZED_SIM_DIR = get_outputs_dir() / "neuromechfly_replay/sim_data/snippet21/"
 VISUALIZED_SIM_TIMERANGE = (0.5, 2.5)
 FWDKIN_SNAPSHOT_FULLREC_FRAMEID = 1414
 VIZ_OUTPUT_DIR = get_outputs_dir() / "neuromechfly_replay/visualization/"
@@ -48,7 +45,7 @@ kinematic_snippet = data["snippet"]
 
 # Plot gait diagram and claw trajectory colored by swing/stance
 gait_info = get_gait_info(VISUALIZED_SIM_DIR, t_range=VISUALIZED_SIM_TIMERANGE)
-fig, ax = viz.plot_claw_traj_by_swing_stance(
+fig, ax = plot_claw_traj_by_swing_stance(
     VISUALIZED_SIM_DIR, gait_info, t_range=VISUALIZED_SIM_TIMERANGE
 )
 fig.savefig(VIZ_OUTPUT_DIR / "claw_traj_by_swing_stance.pdf")
@@ -70,17 +67,17 @@ fig, axes = plot_trajectory(
 )
 fig.savefig(VIZ_OUTPUT_DIR / "trajectory_lf.pdf", dpi=300)
 
-# Generate kinematic replay side-by-side video
-print("Generating replay video...")
-make_replay_video(
-    sim_dir=VISUALIZED_SIM_DIR,
-    output_path=VIZ_OUTPUT_DIR / "nmf_replay_summary.mp4",
-    t_range=VISUALIZED_SIM_TIMERANGE,
-    final_output_playback_speed=0.2,
-    coarse_frames_interval=50,
-)
-
 # Generate a single snapshot of forward kinematics visualization for figures
 print("Generating forward kinematics snapshot figure...")
 fig, ax = plot_invkin_frame(VISUALIZED_SIM_DIR, FWDKIN_SNAPSHOT_FULLREC_FRAMEID)
 fig.savefig(VIZ_OUTPUT_DIR / "forward_kinematics_snapshot.pdf")
+
+# # Generate kinematic replay side-by-side video
+# print("Generating replay video...")
+# make_replay_video(
+#     sim_dir=VISUALIZED_SIM_DIR,
+#     output_path=VIZ_OUTPUT_DIR / "nmf_replay_summary.mp4",
+#     t_range=VISUALIZED_SIM_TIMERANGE,
+#     final_output_playback_speed=0.2,
+#     coarse_frames_interval=50,
+# )

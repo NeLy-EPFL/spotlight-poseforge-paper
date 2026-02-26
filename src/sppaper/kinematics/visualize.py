@@ -47,7 +47,7 @@ LEG_DISP_NAMES = {
 AXIS_DISPLAY_NAMES = {"x": "fore/aft", "y": "med/lat", "z": "height"}
 MM_TO_IN = 1 / 25.4
 SWING_SPEED_THRESHOLD = 25
-CONTACT_FORCE_DISP_THRESHOLD = 0
+CONTACT_FORCE_DISP_THRESHOLD = 0.5
 
 CLAW_XYZ_COLOR = "#546a76"
 DOF_ANGLES_COLOR = "#a23e48"
@@ -87,6 +87,8 @@ def plot_time_series(
         data = pickle.load(f)
         sim_results = data["sim_results"]
         kinematic_snippet = data["snippet"]
+        leg_adhesion_force = data["leg_adhesion_force"]
+        replay_manager = data["replay_manager"]
 
     if t_range is not None:
         start_idx_before = kinematic_snippet.start_idx
@@ -268,9 +270,16 @@ def plot_time_series(
     ax = axes[4]
     ts = sim_results["ground_contacts"]["forces_world"][steps_offset:, :, 2].copy() * -1
     ts[np.isnan(ts)] = 0
+    leg_adhesion_forces = (
+        np.array([replay_manager.leg_adhesion_gain[leg] for leg in LEGS])
+        * leg_adhesion_force
+    )
+    ts -= leg_adhesion_forces[None, :]
+    ts[ts < contact_force_disp_threshold] = 0
     ts = reduce_timeseries_sim2rec(
         ts, sim_results["ctrl_update_mask"][steps_offset:], stride=3
     )
+
     im = ax.imshow(
         np.repeat(ts.T, axis=0, repeats=50),
         aspect="auto",
@@ -278,7 +287,7 @@ def plot_time_series(
         extent=[t_grid[0], t_grid[-1] + 1 / kinematic_snippet.data_fps, 6, 0],
         vmin=0,
         vmax=contact_force_vmax,
-        cmap=cmasher.lavender,
+        cmap=cmasher.arctic_r,
     )
     cax = ax.inset_axes([1.02, 0, 0.03, 1])
     cbar = fig.colorbar(im, cax=cax)
@@ -708,6 +717,7 @@ def make_replay_video(
         data = pickle.load(f)
         sim_results = data["sim_results"]
         kinematic_snippet = data["snippet"]
+        sim_timestep = data["sim_timestep"]
     trajs_info = align_smooth_decompose_trajs(kinematic_snippet, sim_results)
 
     rec_centerpos, rec_heading = get_centerpos_and_heading(
@@ -864,7 +874,7 @@ def make_replay_video(
         spotlight_str = "Spotlight recording"
         nmf_str = "NeuroMechFly replay"
         rec_fps_str = f"Recorded at {kinematic_snippet.data_fps} Hz"
-        sim_fps_str = f"Simulated at {int(1 / sim_results['sim_timestep']):,} Hz"
+        sim_fps_str = f"Simulated at {int(1 / sim_timestep):,} Hz"
         playspeed_str = f"Played at {final_output_playback_speed}x real-time"
         draw.text((20, 30), spotlight_str, fill=(255, 255, 255), font=font_normal)
         draw.text((20, 70), rec_fps_str, fill=(255, 255, 255), font=font_small)
@@ -969,6 +979,9 @@ def plot_claw_traj_by_swing_stance(sim_dir, gait_info, t_range=None):
 
     xlim = ax.get_xlim()
     ylim = ax.get_ylim()
+    xyrange = max(xlim[1] - xlim[0], ylim[1] - ylim[0])
+    xlim = np.mean(xlim) + np.array([-xyrange, xyrange]) * 0.5
+    ylim = np.mean(ylim) + np.array([-xyrange, xyrange]) * 0.5
     scalebar_x0 = xlim[1] + 0.05 * (xlim[1] - xlim[0])
     scalebar_y = ylim[0] + 0.05 * (ylim[1] - ylim[0])
     ax.plot(
