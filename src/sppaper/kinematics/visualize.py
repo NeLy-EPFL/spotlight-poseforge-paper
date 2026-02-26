@@ -899,6 +899,8 @@ def plot_invkin_frame(
     frame_among_full_recording: int,
     rawpred_color=REC_COLOR,
     fwdkin_color=SIM_COLOR,
+    elev=40,
+    azim=-60,
 ):
     with open(sim_dir / "sim_data.pkl", "rb") as f:
         data = pickle.load(f)
@@ -936,7 +938,7 @@ def plot_invkin_frame(
             color=fwdkin_color,
         )
     ax.set_aspect("equal")
-    ax.view_init(elev=40, azim=25)
+    ax.view_init(elev=elev, azim=azim)
 
     return fig, ax
 
