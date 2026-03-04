@@ -79,5 +79,5 @@ make_replay_video(
     output_path=VIZ_OUTPUT_DIR / "nmf_replay_summary.mp4",
     t_range=VISUALIZED_SIM_TIMERANGE,
     final_output_playback_speed=0.2,
-    coarse_frames_interval=50,
+    coarse_frames_interval=10,
 )
