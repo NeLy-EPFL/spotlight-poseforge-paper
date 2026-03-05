@@ -2,8 +2,6 @@ from sppaper.common.plot import setup_matplotlib_params
 
 setup_matplotlib_params()
 
-from pathlib import Path
-
 import matplotlib.pyplot as plt
 import seaborn as sns
 import numpy as np
