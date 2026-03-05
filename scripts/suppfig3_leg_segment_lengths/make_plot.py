@@ -58,7 +58,7 @@ def plot(seglens_over_time, data_fps=330, medfilter_window=5):
     n_frames = seglens_over_time["LF_Coxa"].shape[0]
     t_grid = np.arange(n_frames) / data_fps
 
-    figsize = (170 * MM_TO_IN, 70 * MM_TO_IN)
+    figsize = (180 * MM_TO_IN, 70 * MM_TO_IN)
     fig, axes = plt.subplots(
         3,
         8,
@@ -78,23 +78,17 @@ def plot(seglens_over_time, data_fps=330, medfilter_window=5):
                 length_ts = seglens_over_time[segment_name]
                 length_ts_filt = medfilt(length_ts, medfilter_window)
                 color = COLORS_BY_SIDE[side]
-                side_dispname = SIDE_DISPNAMES[side]
-                ax_ts.plot(
-                    t_grid,
-                    length_ts_filt,
-                    label=side_dispname,
-                    color=color,
-                    linewidth=0.5,
-                )
+                ax_ts.plot(t_grid, length_ts_filt, color=color, linewidth=0.5)
 
                 # Add stat texts
                 mean = np.mean(length_ts_filt)
                 std = np.std(length_ts_filt)
                 coef_var = std / mean
+                side_name = SIDE_DISPNAMES[side].capitalize()
                 ax_ts.text(
                     0.05 * t_grid[-1],
                     0.9 * SEGLEN_LIM[1] - 0.15 * SEGLEN_LIM[1] * i_side,
-                    f"{mean:.2f}±{std:.1g} mm (CV={int(100*coef_var)}%)",
+                    f"{side_name}: {mean:.2f}±{std:.1g} mm (CV={int(100*coef_var)}%)",
                     color=color,
                     fontsize=5,
                 )
@@ -103,13 +97,11 @@ def plot(seglens_over_time, data_fps=330, medfilter_window=5):
             ax_ts.set_xlim(t_grid[0], t_grid[-1] + 1 / data_fps)
             ax_ts.set_ylim(SEGLEN_LIM)
             disp_name = f"{LEGPOS_DISPNAMES[pos]} legs, {SEGLINK_DISPNAMES[seglink]}"
-            ax_ts.set_title(disp_name[0].upper() + disp_name[1:])
+            ax_ts.set_title(disp_name.capitalize())
             if i_pos == len(LEG_POSITIONS) - 1:
                 ax_ts.set_xlabel("Time (s)")
             else:
                 ax_ts.set_xticklabels([])
-            if i_pos == 0 and i_seglink == 0:
-                ax_ts.legend(frameon=False)
             if i_seglink == 0:
                 ax_ts.set_ylabel(f"Length (mm)")
             else:
