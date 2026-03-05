@@ -1,7 +1,6 @@
 from pathlib import Path
 
 import imageio.v3 as iio
-import numpy as np
 
 from sppaper.common.resources import get_poseforge_datadir, get_outputs_dir
 
@@ -64,8 +63,8 @@ if __name__ == "__main__":
     output_dir.mkdir(parents=True, exist_ok=True)
 
     trial = "20250613-fly1b-003"
-    frame_range = (38 * 30, 78 * 30)  # 0:38 to 1:18 in PoseForge's 30 FPS visualization
-    output_fps = 60  # 0.2x (NMF renders at 300 FPS)
+    frame_range = (38 * 30, 82 * 30)  # 0:38 to 1:22 in PoseForge's 30 FPS visualization
+    output_fps = 66  # 0.2x (NMF renders at 300 FPS)
 
     # 3D keypoints video
     print("Processing 3D keypoints video...")
