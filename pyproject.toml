@@ -9,6 +9,7 @@ dependencies = [
     "ipython>=9.10,<10.0",
     "numpy>=2.4,<3",
     "scipy>=1.17,<2",
+    "pandas>=2.0,<4",
     "polars>=1.38,<2",
     "h5py>=3.15,<4",
     "optuna>=4.7,<5",
