@@ -21,8 +21,8 @@ from spotlight_tools.postprocessing.visualize import _determine_adaptive_muscle_
 from sppaper.common.plot import find_font_path
 from sppaper.common.resources import get_outputs_dir, get_spotlight_trials_dir
 
-LEGEND_FONTLARGE = ImageFont.truetype(find_font_path("Arial", weight="bold"), 30)
-LEGEND_FONTSMALL = ImageFont.truetype(find_font_path("Arial"), 25)
+LEGEND_FONTLARGE = ImageFont.truetype(find_font_path("Arial", weight="bold"), 28)
+LEGEND_FONTSMALL = ImageFont.truetype(find_font_path("Arial"), 28)
 LEGEND_TEXTCOLOR = (255, 255, 255)
 OUTPUT_CODEC = "libx265"
 OUTPUT_CODEC_OPTIONS = {
@@ -232,10 +232,25 @@ def make_musframe_disp(
     mus_vrange,
     mus_fps,
     output_playback_speed,
+    fallback_centroid=None,
 ):
     """Read, crop, and convert a muscle frame to an 8-bit RGB display frame."""
     musframe = read_muscle_frame(musframes_dir, musframe_id)
     _, mus_centroid = find_centermost_object(musframe, mus_thr, mus_minsize_norm)
+
+    if mus_centroid is None:
+        if fallback_centroid is not None:
+            print(
+                f"Warning: no muscle detected on frame {musframe_id}, using "
+                f"last known centroid"
+            )
+            mus_centroid = fallback_centroid
+        else:
+            raise ValueError(
+                f"No muscle detected on frame {musframe_id}, "
+                "and no fallback centroid is available"
+            )
+
     musframe_crop = crop_with_padding(musframe, mus_centroid, cropdim)
     musframe_disp = musframe_16bit_to_8bit_overview(musframe_crop, mus_vrange)
     musframe_disp = add_legend(
@@ -244,7 +259,7 @@ def make_musframe_disp(
         mus_fps,
         output_playback_speed,
     )
-    return musframe_disp
+    return musframe_disp, mus_centroid
 
 
 def gaussian_weighted_centroid(
@@ -292,9 +307,10 @@ def make_summary_video(
     gaus_kernel = signal.windows.gaussian(centroid_filtwindow, std=gaus_kernel_sigma)
     behframe_offset = centroid_filtwindow // 2
 
-    behframes_buffer = deque(maxlen=centroid_filtwindow)
-    behcentroids_buffer = deque(maxlen=centroid_filtwindow)
-    musframe_disp_buffer = None
+    behframes_buf = deque(maxlen=centroid_filtwindow)
+    behcentroids_buf = deque(maxlen=centroid_filtwindow)
+    musframe_disp_buf = None
+    last_mus_centroid = None
     filtered_centroids_hist = []
 
     with av.open(str(behvideo_path)) as in_container:
@@ -321,15 +337,15 @@ def make_summary_video(
                             behframe_read, beh_thr, beh_minsize_norm
                         )
                         if behcentroid is None:
-                            if len(behcentroids_buffer) == 0:
+                            if len(behcentroids_buf) == 0:
                                 raise ValueError("No fly detected on the first frame")
                             print(
                                 f"Warning: no fly detected on frame "
                                 f"{behframe_readerid}, using last known centroid"
                             )
-                            behcentroid = behcentroids_buffer[-1][1]
-                        behframes_buffer.append((behframe_readerid, behframe_read))
-                        behcentroids_buffer.append((behframe_readerid, behcentroid))
+                            behcentroid = behcentroids_buf[-1][1]
+                        behframes_buf.append((behframe_readerid, behframe_read))
+                        behcentroids_buf.append((behframe_readerid, behcentroid))
 
                         # Determine which frame we're plotting
                         behframe_plotterid = behframe_readerid - behframe_offset
@@ -344,7 +360,7 @@ def make_summary_video(
 
                         # Compute filtered centroid
                         centroid_filt = gaussian_weighted_centroid(
-                            behcentroids_buffer,
+                            behcentroids_buf,
                             gaus_kernel,
                             behframe_offset,
                             behframe_plotterid,
@@ -352,12 +368,8 @@ def make_summary_video(
                         filtered_centroids_hist.append(centroid_filt)
 
                         # Build behavior display frame
-                        _frameid, behframe_plot = behframes_buffer[
-                            -(behframe_offset + 1)
-                        ]
-                        assert (
-                            _frameid == behframe_plotterid
-                        ), "frame buffering mismatch"
+                        frameid, behframe_plot = behframes_buf[-(behframe_offset + 1)]
+                        assert frameid == behframe_plotterid, "frame buffering mismatch"
                         behframe_disp = make_behframe_disp(
                             behframe_plot,
                             centroid_filt,
@@ -369,7 +381,7 @@ def make_summary_video(
                         # Update muscle display frame if needed
                         musframe_to_update = beh2mus_matches.get(behframe_plotterid)
                         if musframe_to_update is not None:
-                            musframe_disp_buffer = make_musframe_disp(
+                            musframe_disp_buf, last_mus_centroid = make_musframe_disp(
                                 musframes_dir,
                                 musframe_to_update,
                                 mus_thr,
@@ -378,6 +390,7 @@ def make_summary_video(
                                 mus_vrange,
                                 mus_fps,
                                 output_playback_speed,
+                                last_mus_centroid,
                             )
 
                         # Composite and encode output frame
@@ -385,8 +398,8 @@ def make_summary_video(
                             (cropdim, cropdim * 2, 3), dtype=np.uint8
                         )
                         output_frame[:, :cropdim, :] = behframe_disp
-                        if musframe_disp_buffer is not None:
-                            output_frame[:, cropdim:, :] = musframe_disp_buffer
+                        if musframe_disp_buf is not None:
+                            output_frame[:, cropdim:, :] = musframe_disp_buf
                         out_frame = av.VideoFrame.from_ndarray(
                             output_frame, format="rgb24"
                         )
@@ -409,12 +422,13 @@ def make_summary_video(
 
 if __name__ == "__main__":
     input_path = get_spotlight_trials_dir() / "20250613-fly1b-012/"
-    output_path = get_outputs_dir() / "spotlight_data_sample/sample_cropped.mp4"
-    output_nbehframes = 100  # 10 * 330  # 10 sec at 330 FPS
+    output_path = get_outputs_dir() / "spotlight_data_sample/sample_cropped960.mp4"
+    output_nbehframes = 10 * 330  # 10 sec at 330 FPS
 
     make_summary_video(
         input_path,
         output_path,
         output_playback_speed=0.2,
         output_nbehframes=output_nbehframes,
+        cropdim=960,
     )
