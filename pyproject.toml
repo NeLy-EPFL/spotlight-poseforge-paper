@@ -36,6 +36,7 @@ dependencies = [
     "flygym",
     "parallel-video-io",
     "seqikpy",
+    "parallel-matplotlib-animation",
 ]
 
 [project.optional-dependencies]
@@ -57,3 +58,4 @@ spotlight-tools = { path = "../spotlight-tools", editable = true }
 flygym = { path = "../flygym-v2", editable = true }
 parallel-video-io = { path = "../parallel-video-io", editable = true }
 seqikpy = { path = "../sequential-inverse-kinematics", editable = true }
+parallel-matplotlib-animation = { path = "../parallel-matplotlib-animation", editable = true }

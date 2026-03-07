@@ -2221,6 +2221,27 @@ wheels = [
 ]
 
 [[package]]
+name = "parallel-matplotlib-animation"
+version = "0.1.1"
+source = { editable = "../parallel-matplotlib-animation" }
+dependencies = [
+    { name = "av" },
+    { name = "matplotlib" },
+    { name = "numpy" },
+    { name = "pillow" },
+    { name = "tqdm" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "av", specifier = ">=14.0" },
+    { name = "matplotlib", specifier = ">=3.10.0" },
+    { name = "numpy", specifier = ">=2,<3" },
+    { name = "pillow", specifier = ">=11.0" },
+    { name = "tqdm", specifier = ">=4.67" },
+]
+
+[[package]]
 name = "parallel-video-io"
 version = "0.1.4"
 source = { editable = "../parallel-video-io" }
@@ -3358,6 +3379,7 @@ dependencies = [
     { name = "opencv-python" },
     { name = "optuna" },
     { name = "pandas" },
+    { name = "parallel-matplotlib-animation" },
     { name = "parallel-video-io" },
     { name = "pillow" },
     { name = "plotly" },
@@ -3401,6 +3423,7 @@ requires-dist = [
     { name = "opencv-python", specifier = ">=4.12,<5" },
     { name = "optuna", specifier = ">=4.7,<5" },
     { name = "pandas", specifier = ">=2.0,<4" },
+    { name = "parallel-matplotlib-animation", editable = "../parallel-matplotlib-animation" },
     { name = "parallel-video-io", editable = "../parallel-video-io" },
     { name = "pillow", specifier = ">=11,<13" },
     { name = "plotly", specifier = ">=6.5,<7" },
