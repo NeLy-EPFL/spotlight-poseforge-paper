@@ -32,6 +32,7 @@ invkin_dataset = KinematicsDataset(
     min_duration_sec=MIN_DURATION_SEC,
     data_fps=DATA_FPS,
 )
+invkin_dataset.summary_df.write_csv(REPLAY_OUTPUT_DIR / "walking_snippets.csv")
 
 replay_manager = NeuroMechFlyReplayManager(
     sample_invkin_snippet=invkin_dataset[0],
