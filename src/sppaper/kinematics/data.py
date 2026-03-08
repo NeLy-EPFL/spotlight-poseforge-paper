@@ -11,6 +11,8 @@ from scipy.signal import savgol_filter
 from spotlight_tools.calibration.mapper import SpotlightPositionMapper
 from poseforge.neuromechfly.constants import dof_name_lookup_canonical_to_nmf
 
+import poseforge.neuromechfly.constants as nmfconst
+
 import sppaper.common.filter as filter
 import sppaper.kinematics.trajectory as traj
 from sppaper.common.resources import get_spotlight_trials_dir
@@ -238,7 +240,7 @@ def _load_poseforge_output(
                 continue
             metadata_cols = {
                 "idx": len(summary_df_rows),
-                "trial": trial_dir.stem,
+                "trial": poseforge_output_dir.parent.stem,
                 "start_idx": np.int32(start),
                 "end_idx": np.int32(end),
                 "duration_s": np.float32((end - start) / data_fps),
@@ -254,7 +256,7 @@ def _load_poseforge_output(
                 "fps": data_fps,
                 "keypoints_order": all_keypoints_order,
                 "legs_order": legs_order,
-                "keypoints_order_per_leg": keypoints_order_per_leg,
+                "keypoints_order_per_leg": kpts_order_per_leg,
                 "dofs_order_per_leg": dofs_order_per_leg,
                 **metadata_cols,
             }
