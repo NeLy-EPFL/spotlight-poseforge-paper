@@ -9,6 +9,7 @@ dependencies = [
     "ipython>=9.10,<10.0",
     "numpy>=2.4,<3",
     "scipy>=1.17,<2",
+    "pandas>=2.0,<4",
     "polars>=1.38,<2",
     "h5py>=3.15,<4",
     "optuna>=4.7,<5",
@@ -26,13 +27,16 @@ dependencies = [
     "imagecodecs==2025.8.2",
     "opencv-python>=4.12,<5",
     "opencv-contrib-python>=4.12,<5",
-    "pillow>=12.1,<13",
+    "pillow>=11,<13",
     "av>=16,<17",
     "plotly>=6.5,<7",
     "vidstab>=1.7.4,<2",
     "poseforge",
     "spotlight-tools",
     "flygym",
+    "parallel-video-io",
+    "seqikpy",
+    "parallel-matplotlib-animation",
 ]
 
 [project.optional-dependencies]
@@ -52,3 +56,6 @@ where = ["src"]
 poseforge = { path = "../poseforge", editable = true }
 spotlight-tools = { path = "../spotlight-tools", editable = true }
 flygym = { path = "../flygym-v2", editable = true }
+parallel-video-io = { path = "../parallel-video-io", editable = true }
+seqikpy = { path = "../sequential-inverse-kinematics", editable = true }
+parallel-matplotlib-animation = { path = "../parallel-matplotlib-animation", editable = true }

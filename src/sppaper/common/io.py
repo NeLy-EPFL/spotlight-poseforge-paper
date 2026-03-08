@@ -1,6 +1,7 @@
 import av
 import numpy as np
 
+
 def load_precise_sparse_frames(
     path, frames: list[int] | None = None
 ) -> list[np.ndarray]:

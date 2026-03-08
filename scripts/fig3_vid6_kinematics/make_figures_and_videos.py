@@ -1,11 +1,13 @@
 import pickle
 
+from sppaper.kinematics.data import get_gait_info
 from sppaper.common.resources import get_outputs_dir
 from sppaper.kinematics.visualize import (
     plot_time_series,
     plot_trajectory,
     make_replay_video,
     plot_invkin_frame,
+    plot_claw_traj_by_swing_stance,
 )
 
 KIN_FILTER_WINDOW_SIZE = 3
@@ -28,9 +30,7 @@ LEG_DISP_NAMES = {
 }
 AXIS_DISPLAY_NAMES = {"x": "fore/aft", "y": "med/lat", "z": "height"}
 
-VISUALIZED_SIM_DIR = (
-    get_outputs_dir() / "neuromechfly_replay/kp150_damp0.5_slidfric2.0/snippet21/"
-)
+VISUALIZED_SIM_DIR = get_outputs_dir() / "neuromechfly_replay/sim_data/snippet50/"
 VISUALIZED_SIM_TIMERANGE = (0.5, 2.5)
 FWDKIN_SNAPSHOT_FULLREC_FRAMEID = 1414
 VIZ_OUTPUT_DIR = get_outputs_dir() / "neuromechfly_replay/visualization/"
@@ -43,10 +43,20 @@ with open(VISUALIZED_SIM_DIR / "sim_data.pkl", "rb") as f:
 sim_results = data["sim_results"]
 kinematic_snippet = data["snippet"]
 
+# Plot gait diagram and claw trajectory colored by swing/stance
+gait_info = get_gait_info(VISUALIZED_SIM_DIR, t_range=VISUALIZED_SIM_TIMERANGE)
+fig, ax = plot_claw_traj_by_swing_stance(
+    VISUALIZED_SIM_DIR, gait_info, t_range=VISUALIZED_SIM_TIMERANGE
+)
+fig.savefig(VIZ_OUTPUT_DIR / "claw_traj_by_swing_stance.pdf")
+
 # Generate time series figure
 print("Generating time series figure...")
 fig, axes = plot_time_series(
-    sim_dir=VISUALIZED_SIM_DIR, leg="lf", t_range=VISUALIZED_SIM_TIMERANGE
+    sim_dir=VISUALIZED_SIM_DIR,
+    leg="lf",
+    gait_info=gait_info,
+    t_range=VISUALIZED_SIM_TIMERANGE,
 )
 fig.savefig(VIZ_OUTPUT_DIR / "time_series_lf.pdf")
 
@@ -69,5 +79,5 @@ make_replay_video(
     output_path=VIZ_OUTPUT_DIR / "nmf_replay_summary.mp4",
     t_range=VISUALIZED_SIM_TIMERANGE,
     final_output_playback_speed=0.2,
-    coarse_frames_interval=50,
+    coarse_frames_interval=10,
 )

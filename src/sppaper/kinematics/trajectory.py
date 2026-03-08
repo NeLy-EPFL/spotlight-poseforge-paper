@@ -85,12 +85,12 @@ def align_traj(traj, traj_ref, anchor_origin: bool = True):
 
 def inv_align_traj(traj, R, t) -> np.ndarray:
     """Undo the rigid transformation fitted by align_traj.
-    
+
     Args:
         traj: (L, 2) array, trajectory to transform back.
         R: (2, 2) rotation matrix from align_traj.
         t: (2,) translation vector from align_traj.
-    
+
     Returns:
         traj_inv_aligned: (L, 2) array, trajectory transformed back to original space.
     """

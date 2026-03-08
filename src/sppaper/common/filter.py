@@ -59,6 +59,7 @@ def median_filter_over_time(x: _np.ndarray, k: int) -> _np.ndarray:
     filter_size = (k,) + (1,) * (x.ndim - 1)
     return _median_filter(x, size=filter_size)
 
+
 def ratelim_filter_over_time(x: _np.ndarray, ratelim: float) -> _np.ndarray:
     """Apply a rate-limiting (slew rate) filter along axis 0.
 

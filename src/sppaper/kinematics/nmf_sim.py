@@ -1,7 +1,6 @@
 import numpy as np
 from tqdm import trange
 
-import mujoco
 from scipy.spatial.transform import Rotation as R
 
 from flygym import assets_dir as flygym_assets_dir
@@ -27,20 +26,27 @@ from sppaper.kinematics.data import KinematicsSnippet
 from sppaper.kinematics.shared_constants import VIDEO_OUTPUT_FPS, VIDEO_PLAYBACK_SPEED
 
 # Constants
-PASSIVE_TARSUS_STIFFNESS = 10
-PASSIVE_TARSUS_DAMPING = 0.5
-ARTICULATED_JOINTS = JointPreset.LEGS_ONLY
+ARTICULATED_JOINTS = JointPreset.ALL_BIOLOGICAL
 ACTUATED_DOFS = ActuatedDOFPreset.LEGS_ACTIVE_ONLY
 AXIS_ORDER = AxisOrder.YAW_PITCH_ROLL
 ACTUATOR_TYPE = ActuatorType.POSITION
 NEUTRAL_POSE_FILE = flygym_assets_dir / "model/pose/neutral.yaml"
-SPAWN_POSITION = (0, 0, 0.7)  # mm
+SPAWN_POSITION = (0, 0, 1)  # mm
 SPAWN_ROTATION = Rotation3D("quat", (1, 0, 0, 0))
 CAM_RES = 1440
 
 
 class NeuroMechFlyReplayManager:
-    def __init__(self, sample_invkin_snippet: KinematicsSnippet):
+    def __init__(
+        self,
+        sample_invkin_snippet: KinematicsSnippet,
+        passive_tarsus_stiffness: float,
+        passive_tarsus_damping: float,
+        leg_adhesion_gain: float,
+    ):
+        self.passive_tarsus_stiffness = passive_tarsus_stiffness
+        self.passive_tarsus_damping = passive_tarsus_damping
+        self.leg_adhesion_gain = leg_adhesion_gain
         self.dof_idxmap_rec2sim, self.dof_mirror_mask = (
             self._get_dof_mapping_and_mirror_mask(sample_invkin_snippet)
         )
@@ -50,6 +56,7 @@ class NeuroMechFlyReplayManager:
         actuator_gain: float,
         joint_damping: float,
         sliding_friction: float,
+        leg_adhesion_force: float,
     ) -> "NeuroMechFlyReplayInstance":
         sim, fly = self._setup_sim_and_fly(
             actuator_gain,
@@ -57,7 +64,7 @@ class NeuroMechFlyReplayManager:
             sliding_friction,
         )
         return NeuroMechFlyReplayInstance(
-            sim, fly, self.dof_idxmap_rec2sim, self.dof_mirror_mask
+            sim, fly, self.dof_idxmap_rec2sim, self.dof_mirror_mask, leg_adhesion_force
         )
 
     def _setup_sim_and_fly(
@@ -77,8 +84,8 @@ class NeuroMechFlyReplayManager:
         n_tarsus_overrides = 0
         for dof, mjcf_joint in fly.jointdof_to_mjcfjoint.items():
             if dof.child.link in ("tarsus2", "tarsus3", "tarsus4", "tarsus5"):
-                mjcf_joint.stiffness = PASSIVE_TARSUS_STIFFNESS
-                mjcf_joint.damping = PASSIVE_TARSUS_DAMPING
+                mjcf_joint.stiffness = self.passive_tarsus_stiffness
+                mjcf_joint.damping = self.passive_tarsus_damping
                 n_tarsus_overrides += 1
         assert n_tarsus_overrides == 4 * 6, "error overriding tarsus joint params"
 
@@ -90,6 +97,7 @@ class NeuroMechFlyReplayManager:
             kp=actuator_gain,
             neutral_input=neutral_pose,
         )
+        fly.add_leg_adhesion(self.leg_adhesion_gain)
 
         # Add visuals
         fly.colorize()
@@ -103,7 +111,7 @@ class NeuroMechFlyReplayManager:
 
         # Create a world and spawn the fly
         world = FlatGroundWorld()
-        world.ground_geom.rgba = (1, 1, 1, 0.75)
+        world.ground_geom.rgba = (1, 1, 1, 1)
         contact_params = ContactParams(sliding_friction=sliding_friction)
         world.add_fly(
             fly, SPAWN_POSITION, SPAWN_ROTATION, ground_contact_params=contact_params
@@ -181,6 +189,7 @@ class NeuroMechFlyReplayInstance:
         fly: Fly,
         dof_idxmap_rec2sim: np.ndarray,
         dof_mirror_mask: np.ndarray,
+        leg_adhesion_force: float,
     ) -> None:
         self.sim = sim
         self.fly = fly
@@ -188,6 +197,7 @@ class NeuroMechFlyReplayInstance:
         self.dof_mirror_mask = dof_mirror_mask
         self.bodysegs_order = fly.get_bodysegs_order()
         self.actuated_dofs_order = fly.get_actuated_jointdofs_order(ACTUATOR_TYPE)
+        self.leg_adhesion_force = leg_adhesion_force
 
     def replay_invkin_snippet(
         self,
@@ -219,12 +229,15 @@ class NeuroMechFlyReplayInstance:
         # Reorder and mirror columns to match simulation DoF ordering and conventions
         joint_angles_arr = joint_angles_arr[:, self.dof_idxmap_rec2sim]
         joint_angles_arr[:, self.dof_mirror_mask] *= -1
+        joint_angles_arr[:500, :] = joint_angles_arr[500, :][None, :]
 
         # Initialize simulation and set up some buffers
         self.sim.reset()
         fly_name = self.fly.name
         self.sim.set_actuator_inputs(fly_name, ACTUATOR_TYPE, joint_angles_arr[0, :])
-        self.sim.warmup()
+        self.sim.warmup(duration_s=0.05)
+        self.sim.set_leg_adhesion_states(fly_name, np.ones(6) * self.leg_adhesion_force)
+        self.sim.warmup(duration_s=0.05)
         body_pos_hist = np.full(
             (nsteps_sim, len(self.bodysegs_order), 3), np.nan, dtype=np.float32
         )
@@ -338,7 +351,6 @@ class NeuroMechFlyReplayInstance:
             "thorax_pos_inputmatched": thorax_pos_inputmatched,
             "heading_inputmatched": heading_inputmatched,
             "ground_contacts": contact_hist,
-            "sim_timestep": self.sim.mj_model.opt.timestep,
         }
         return sim_results
 
