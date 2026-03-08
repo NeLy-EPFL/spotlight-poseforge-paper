@@ -55,8 +55,8 @@ replay_instance = replay_manager.create_sim(
 )
 
 for i, invkin_snippet in enumerate(invkin_dataset):
-    # Use snippet 21 for testing and visualization for now
-    if i != 50:
+    # Use snippet 41 for testing and visualization for now
+    if i != 41:
         continue
 
     print(f"Replaying snippet {i+1}/{len(invkin_dataset)}")
