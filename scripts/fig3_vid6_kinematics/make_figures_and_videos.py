@@ -30,7 +30,7 @@ LEG_DISP_NAMES = {
 }
 AXIS_DISPLAY_NAMES = {"x": "fore/aft", "y": "med/lat", "z": "height"}
 
-VISUALIZED_SIM_DIR = get_outputs_dir() / "neuromechfly_replay/sim_data/snippet21/"
+VISUALIZED_SIM_DIR = get_outputs_dir() / "neuromechfly_replay/sim_data/snippet50/"
 VISUALIZED_SIM_TIMERANGE = (0.5, 2.5)
 FWDKIN_SNAPSHOT_FULLREC_FRAMEID = 1414
 VIZ_OUTPUT_DIR = get_outputs_dir() / "neuromechfly_replay/visualization/"

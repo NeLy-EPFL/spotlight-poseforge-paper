@@ -26,7 +26,7 @@ from sppaper.kinematics.data import KinematicsSnippet
 from sppaper.kinematics.shared_constants import VIDEO_OUTPUT_FPS, VIDEO_PLAYBACK_SPEED
 
 # Constants
-ARTICULATED_JOINTS = JointPreset.LEGS_ONLY
+ARTICULATED_JOINTS = JointPreset.ALL_BIOLOGICAL
 ACTUATED_DOFS = ActuatedDOFPreset.LEGS_ACTIVE_ONLY
 AXIS_ORDER = AxisOrder.YAW_PITCH_ROLL
 ACTUATOR_TYPE = ActuatorType.POSITION
@@ -111,7 +111,7 @@ class NeuroMechFlyReplayManager:
 
         # Create a world and spawn the fly
         world = FlatGroundWorld()
-        world.ground_geom.rgba = (1, 1, 1, 0.75)
+        world.ground_geom.rgba = (1, 1, 1, 1)
         contact_params = ContactParams(sliding_friction=sliding_friction)
         world.add_fly(
             fly, SPAWN_POSITION, SPAWN_ROTATION, ground_contact_params=contact_params

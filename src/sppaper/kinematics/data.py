@@ -9,6 +9,7 @@ from scipy.interpolate import interp1d
 from scipy.signal import savgol_filter
 
 from spotlight_tools.calibration.mapper import SpotlightPositionMapper
+from poseforge.neuromechfly.constants import dof_name_lookup_canonical_to_nmf
 
 import sppaper.common.filter as filter
 import sppaper.kinematics.trajectory as traj
@@ -25,14 +26,14 @@ class KinematicsDataset:
     def __init__(
         self,
         *,
-        keypoints3d_output_dir,
+        spotlight_trial_dirs,
         min_xy_conf,
         mask_denoise_kernel_size_sec,
         min_duration_sec,
         data_fps,
     ):
         self.summary_df, self.data_by_idx = _load_poseforge_output(
-            keypoints3d_output_dir=keypoints3d_output_dir,
+            spotlight_trial_dirs=spotlight_trial_dirs,
             min_xy_conf=min_xy_conf,
             mask_denoise_kernel_size_sec=mask_denoise_kernel_size_sec,
             min_duration_sec=min_duration_sec,
@@ -187,7 +188,7 @@ class KinematicsSnippet:
 
 def _load_poseforge_output(
     *,
-    keypoints3d_output_dir,
+    spotlight_trial_dirs,
     min_xy_conf,
     mask_denoise_kernel_size_sec,
     min_duration_sec,
@@ -198,20 +199,33 @@ def _load_poseforge_output(
 
     summary_df_rows = []
     data_by_idx = {}
-    for trial_dir in sorted(keypoints3d_output_dir.iterdir()):
-        with h5py.File(trial_dir / "keypoints3d.h5", "r") as f:
-            raw_world_xyz = f["keypoints_world_xyz"][:]
-            cam_xy = f["keypoints_camera_xy"][:]
-            conf_xy = f["keypoints_camera_xy_conf"][:]
-            all_keypoints_order = list(f["keypoints_world_xyz"].attrs["keypoints"])
-        with h5py.File(trial_dir / "inverse_kinematics.h5", "r") as f:
-            fwdkin_world_xyz = f["fwdkin_world_xyz"][:]
-            joint_angles = f["joint_angles"][:]
-            keypoints_order_per_leg = list(
-                f["fwdkin_world_xyz"].attrs["keypoint_names_per_leg"]
+    for trial_dir in spotlight_trial_dirs:
+        poseforge_output_dir = trial_dir / "poseforge_output/"
+        if not poseforge_output_dir.exists():
+            raise FileNotFoundError(
+                f"PoseForge output not found for trial {trial_dir.stem}. "
+                "Run PoseForge production pipeline on this trial first; this would "
+                f"generate a directory {poseforge_output_dir} with pose estimates."
             )
+        with h5py.File(poseforge_output_dir / "keypoints3d_prediction.h5", "r") as f:
+            raw_world_xyz = f["pred_world_xyz"][:]
+            cam_xy = f["pred_xy"][:]
+            conf_xy = f["conf_xy"][:]
+            all_keypoints_order = list(f.attrs["keypoint_names"])
+        with h5py.File(poseforge_output_dir / "inverse_kinematics_output.h5", "r") as f:
+            # For keypoint positions, drop antannae and expand 30 to 6*5 (by leg)
+            fwdkin_world_xyz = f["fwdkin_world_xyz"][:, :30, :].reshape(-1, 6, 5, 3)
+            joint_angles = f["joint_angles"][:]
             legs_order = list(f["fwdkin_world_xyz"].attrs["legs"])
-            dofs_order_per_leg = list(f["joint_angles"].attrs["dof_names_per_leg"])
+            keypoints_order_per_leg = list(
+                kpt
+                for kpt in f["fwdkin_world_xyz"].attrs["keypoint_names"]
+                if kpt.startswith(legs_order[0])
+            )
+            # Temporary hack: change the following line to
+            # `f["joint_angles"].attrs["dof_names_per_leg"]`
+            # after fixing https://github.com/NeLy-EPFL/poseforge/issues/47
+            dofs_order_per_leg = list(dof_name_lookup_canonical_to_nmf.keys())
             assert list(f["joint_angles"].attrs["legs"]) == legs_order
 
         confmask = conf_xy.mean(axis=1) > min_xy_conf
