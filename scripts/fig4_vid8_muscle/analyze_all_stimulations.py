@@ -53,6 +53,8 @@ from figure_config import (
     TOP_K_PIXELS,
     MORPH_KERNEL_SIZE,
     MORPH_N_ITERATIONS,
+    MIN_FRAGMENT_SIZE,
+    MAX_FRAGMENT_DISTANCE,
     DILATION_KERNELS,
     BASELINE_WINDOW_SEC,
     # Colors
@@ -334,7 +336,9 @@ def analyze_experiment(exp_folder, segments_to_show, output_folder,
         dilation_kernels=DILATION_KERNELS,
         bilateral_d=BILATERAL_D,
         bilateral_sigma_color=BILATERAL_SIGMA_COLOR,
-        bilateral_sigma_space=BILATERAL_SIGMA_SPACE
+        bilateral_sigma_space=BILATERAL_SIGMA_SPACE,
+        min_fragment_size=MIN_FRAGMENT_SIZE,
+        max_fragment_distance=MAX_FRAGMENT_DISTANCE
     )
         
     # Create full-sized array with NaNs, then fill in computed values

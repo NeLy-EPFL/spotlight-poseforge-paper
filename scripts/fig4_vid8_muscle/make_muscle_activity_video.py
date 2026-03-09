@@ -62,6 +62,8 @@ from figure_config import (
     # Segmentation
     MORPH_KERNEL_SIZE,
     MORPH_N_ITERATIONS,
+    MIN_FRAGMENT_SIZE,
+    MAX_FRAGMENT_DISTANCE,
     DILATION_KERNELS,
     # Baseline
     BASELINE_WINDOW_SEC,
@@ -248,7 +250,9 @@ def generate_video(exp_folder, segments_to_show, output_path, max_frames=None):
         dilation_kernels=DILATION_KERNELS,
         bilateral_d=BILATERAL_D,
         bilateral_sigma_color=BILATERAL_SIGMA_COLOR,
-        bilateral_sigma_space=BILATERAL_SIGMA_SPACE
+        bilateral_sigma_space=BILATERAL_SIGMA_SPACE,
+        min_fragment_size=MIN_FRAGMENT_SIZE,
+        max_fragment_distance=MAX_FRAGMENT_DISTANCE
     )
     
     # Compute time axis

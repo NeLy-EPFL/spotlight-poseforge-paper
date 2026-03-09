@@ -26,6 +26,11 @@ TOP_K_PIXELS = 500  # Number of brightest pixels to use for activity computation
 # ============================================================================
 MORPH_KERNEL_SIZE = 2  # Size of morphological kernel for mask denoising
 MORPH_N_ITERATIONS = 1  # Number of morphological iterations
+
+# Fragment merging parameters (for preserving valid mask fragments after denoising)
+MIN_FRAGMENT_SIZE = 50  # Minimum size in pixels to keep a fragment (fragments smaller than this are discarded)
+MAX_FRAGMENT_DISTANCE = 100  # Maximum distance in pixels between fragments to merge using convex hull
+
 # Dilation kernel configuration per segment
 # Each entry: 'segment_name': {'direction': 'lower_left'|'lower_right'|'uniform', 'size': int}
 DILATION_KERNELS = {
