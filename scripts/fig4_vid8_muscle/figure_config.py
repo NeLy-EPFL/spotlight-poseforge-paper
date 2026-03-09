@@ -5,27 +5,51 @@ Shared configuration parameters for muscle activity analysis (videos and figures
 # ============================================================================
 # IMAGE PREPROCESSING
 # ============================================================================
-BILATERAL_D = 13  # Diameter of pixel neighborhood (0 = compute from sigmaSpace)
-BILATERAL_SIGMA_COLOR = 75  # Filter sigma in the color space (larger = more colors mixed)
-BILATERAL_SIGMA_SPACE = 75  # Filter sigma in the coordinate space (larger = more distant pixels influence)
+BILATERAL_D = 5  # Diameter of pixel neighborhood (0 = compute from sigmaSpace)
+BILATERAL_SIGMA_COLOR = 150  # Filter sigma in the color space (larger = more colors mixed)
+BILATERAL_SIGMA_SPACE = 150  # Filter sigma in the coordinate space (larger = more distant pixels influence)
 
 # ============================================================================
 # IMAGE NORMALIZATION SETTINGS
 # ============================================================================
-NORM_LOWER_PERCENTILE = 20  # Lower percentile for image normalization
-NORM_UPPER_PERCENTILE = 99  # Upper percentile for image normalization
+NORM_LOWER_PERCENTILE = 50  # Lower percentile for image normalization
+NORM_UPPER_PERCENTILE = 100.0  # Upper percentile for image normalization
+VMAX_SHIFT = 20.0  # Additional shift added to vmax for better contrast in visualizations
 
 # ============================================================================
 # MUSCLE ACTIVITY COMPUTATION
 # ============================================================================
-TOP_K_PIXELS = 300  # Number of brightest pixels to use for activity computation
+TOP_K_PIXELS = 500  # Number of brightest pixels to use for activity computation
 
 # ============================================================================
 # SEGMENTATION PROCESSING
 # ============================================================================
 MORPH_KERNEL_SIZE = 2  # Size of morphological kernel for mask denoising
 MORPH_N_ITERATIONS = 1  # Number of morphological iterations
-DILATION_KERNEL_SIZE = 1  # Size of dilation kernel for final masks
+# Dilation kernel configuration per segment
+# Each entry: 'segment_name': {'direction': 'lower_left'|'lower_right'|'uniform', 'size': int}
+DILATION_KERNELS = {
+    # Right front leg - dilate toward lower left (toward body)
+    'RFFemur': {'direction': 'left_narrow', 'size': 11},
+    'RFTibia': {'direction': 'left_narrow', 'size': 11},
+    
+    # Left front leg - dilate toward lower right (toward body)
+    'LFFemur': {'direction': 'right_narrow', 'size': 11},
+    'LFTibia': {'direction': 'right_narrow', 'size': 11},
+    
+    # Other legs - uniform dilation
+    'RMFemur': {'direction': 'uniform', 'size': 0},
+    'RMTibia': {'direction': 'uniform', 'size': 0},
+    'RHFemur': {'direction': 'uniform', 'size': 0},
+    'RHTibia': {'direction': 'uniform', 'size': 0},
+    'LMFemur': {'direction': 'uniform', 'size': 0},
+    'LMTibia': {'direction': 'uniform', 'size': 0},
+    'LHFemur': {'direction': 'uniform', 'size': 0},
+    'LHTibia': {'direction': 'uniform', 'size': 0},
+    
+    # Default for any other segment
+    'default': {'direction': 'uniform', 'size': 0},
+}
 
 # ============================================================================
 # BASELINE AND DELTA F/F0 COMPUTATION
@@ -37,20 +61,30 @@ BASELINE_WINDOW_SEC = 0.5  # Duration (seconds) before/after stimulation for bas
 # ============================================================================
 SEGMENT_BLEND_ORIGINAL = 0.6  # Weight of original image in segment overlay
 SEGMENT_BLEND_COLOR = 0.4  # Weight of segment color in overlay
-TOP_K_HIGHLIGHT_FACTOR = 0.5  # Brightness factor for top-k pixel highlighting
+TOP_K_HIGHLIGHT_FACTOR = 0.25  # Brightness factor for top-k pixel highlighting
 
 # ============================================================================
 # SEGMENT COLOR PALETTE
 # ============================================================================
+# Define canonical order for plotting (RF, LF, RM, LM, RH, LH)
+SEGMENT_ORDER = [
+    "RFFemur", "RFTibia",
+    "LFFemur", "LFTibia",
+    "RMFemur", "RMTibia",
+    "LMFemur", "LMTibia",
+    "RHFemur", "RHTibia",
+    "LHFemur", "LHTibia",
+][::-1]
+
 SEGMENT_COLORS = {
     "LFFemur": "#e41a1c",
     "LMFemur": "#377eb8",
     "LHFemur": "#4daf4a",
     "RFFemur": "#984ea3",
     "RMFemur": "#ff7f00",
-    "RHFemur": "#fdbf6f",  # Changed from yellow to light orange
+    "RHFemur": "#f781bf",  # Changed from yellow to light orange
     "LFTibia": "#a65628",
-    "LMTibia": "#f781bf",
+    "LMTibia": "#fdbf6f",
     "LHTibia": "#999999",
     "RFTibia": "#66c2a5",
     "RMTibia": "#fc8d62",

@@ -36,10 +36,10 @@ import av
 from spotlight_tools.postprocessing.muscle import (
     match_muscle_frameid_to_behavior_frameid,
 )
-from sppaper.common.plot import find_font_path
 from sppaper.common.muscle import (
     compute_muscle_activity,
     compute_delta_f_over_f,
+    create_segmentation_overlay,
 )
 
 # Import configuration parameters
@@ -56,12 +56,13 @@ from figure_config import (
     # Normalization
     NORM_LOWER_PERCENTILE,
     NORM_UPPER_PERCENTILE,
+    VMAX_SHIFT,
     # Muscle activity
     TOP_K_PIXELS,
     # Segmentation
     MORPH_KERNEL_SIZE,
     MORPH_N_ITERATIONS,
-    DILATION_KERNEL_SIZE,
+    DILATION_KERNELS,
     # Baseline
     BASELINE_WINDOW_SEC,
     # Layout
@@ -71,6 +72,7 @@ from figure_config import (
     SEGMENT_BLEND_COLOR,
     TOP_K_HIGHLIGHT_FACTOR,
     # Colors and styling
+    SEGMENT_ORDER,
     SEGMENT_COLORS,
     TRACE_LINEWIDTH,
     TRACE_BASELINE_ALPHA,
@@ -85,44 +87,6 @@ CODEC_OPTIONS = {
     "preset": CODEC_PRESET,
 }
 
-
-def create_segmentation_overlay(muscle_frame, segmap, seg_labels, segments_to_show, 
-                               top_k_masks_dict=None, frame_idx=None):
-    """Create RGB image with segmentation overlay for specified segments (optimized)."""
-    # Convert grayscale muscle frame to RGB
-    muscle_rgb = cv2.cvtColor(muscle_frame, cv2.COLOR_GRAY2RGB).astype(np.float32)
-    
-    # Create overlay - vectorized operations
-    for segment_name in segments_to_show:
-        if segment_name not in seg_labels:
-            continue
-        
-        seg_id = seg_labels.index(segment_name)
-        mask = (segmap == seg_id)
-        
-        if not mask.any():  # Skip if segment not present
-            continue
-        
-        # Get color for this segment
-        color_hex = SEGMENT_COLORS.get(segment_name, "#ffffff")
-        color_rgb = np.array(mcolors.to_rgb(color_hex)) * 255
-        
-        # Vectorized blending with configurable weights
-        mask_3d = mask[:, :, np.newaxis]
-        muscle_rgb = np.where(mask_3d, 
-                             SEGMENT_BLEND_ORIGINAL * muscle_rgb + SEGMENT_BLEND_COLOR * color_rgb,
-                             muscle_rgb)
-        
-        # Highlight top k pixels in darker shade (using precomputed masks)
-        if top_k_masks_dict is not None and frame_idx is not None:
-            top_k_mask = top_k_masks_dict.get((frame_idx, segment_name))
-            if top_k_mask is not None and top_k_mask.any():
-                dark_color = color_rgb * TOP_K_HIGHLIGHT_FACTOR
-                # Apply black color to top k pixels
-                top_k_mask_3d = top_k_mask[:, :, np.newaxis]
-                muscle_rgb = np.where(top_k_mask_3d, dark_color, muscle_rgb)
-    
-    return muscle_rgb.astype(np.uint8)
 
 def create_trace_panel_fast(time_sec, traces, segment_names, current_time_idx,
                            stim_starts, stim_ends, panel_width, panel_height):
@@ -268,15 +232,20 @@ def generate_video(exp_folder, segments_to_show, output_path, max_frames=None):
     segments_to_analyze = [seg for seg in seg_labels if any(
         s.lower() in seg.lower() for s in segments_to_show
     )]
+    
+    # Sort segments according to canonical order (RF, LF, RM, LM, RH, LH)
+    segments_to_analyze = sorted(segments_to_analyze, 
+                                 key=lambda s: SEGMENT_ORDER.index(s) if s in SEGMENT_ORDER else 999)
+    
     print(f"Analyzing segments: {segments_to_analyze}")
     
     # Compute muscle activity and top-k pixel masks
-    muscle_activity, top_k_masks = compute_muscle_activity(
+    muscle_activity, top_k_masks, processed_masks_dict = compute_muscle_activity(
         mf_metadata, processed_folder, segmaps, frame_ids,
         seg_labels, segments_to_analyze, duo_yaml, k=TOP_K_PIXELS,
         morph_kernel_size=MORPH_KERNEL_SIZE,
         morph_n_iterations=MORPH_N_ITERATIONS,
-        dilation_kernel_size=DILATION_KERNEL_SIZE,
+        dilation_kernels=DILATION_KERNELS,
         bilateral_d=BILATERAL_D,
         bilateral_sigma_color=BILATERAL_SIGMA_COLOR,
         bilateral_sigma_space=BILATERAL_SIGMA_SPACE
@@ -330,8 +299,8 @@ def generate_video(exp_folder, segments_to_show, output_path, max_frames=None):
     
     # Compute normalization percentiles ONCE (not per frame!)
     vmin = np.percentile(all_frames_sample, NORM_LOWER_PERCENTILE)
-    vmax = np.percentile(all_frames_sample, NORM_UPPER_PERCENTILE)
-    print(f"Normalization range: {vmin:.1f} to {vmax:.1f}")
+    vmax = np.percentile(all_frames_sample, NORM_UPPER_PERCENTILE) + VMAX_SHIFT
+    print(f"Normalization range: {vmin:.1f} to {vmax:.1f} (with VMAX_SHIFT={VMAX_SHIFT})")
     
     del all_pixel_values  # Free memory
     del all_frames_sample  # Don't need this anymore
@@ -380,20 +349,23 @@ def generate_video(exp_folder, segments_to_show, output_path, max_frames=None):
             muscle_norm = np.clip((muscle_frame - vmin) / (vmax - vmin + 1e-8), 0, 1)
             muscle_norm = (muscle_norm * 255).astype(np.uint8)
             
-            # Get corresponding segmap
-            bf_frame_id = match_muscle_frameid_to_behavior_frameid(
-                mf_id, dual_recording_timing_metadata_path=duo_yaml
-            )
-            segmap = segmaps[frame_ids == bf_frame_id][0]
-            segmap_resized = cv2.resize(
-                segmap, (frame_width, frame_height),
-                interpolation=cv2.INTER_NEAREST
-            )
+            # Get processed masks for this frame
+            frame_processed_masks = processed_masks_dict[i]
             
-            # Create segmentation overlay (using precomputed top-k masks)
+            # Resize processed masks to muscle frame dimensions
+            frame_processed_masks_resized = []
+            for mask in frame_processed_masks:
+                mask_resized = cv2.resize(
+                    mask.astype(np.uint8), (frame_width, frame_height),
+                    interpolation=cv2.INTER_NEAREST
+                )
+                frame_processed_masks_resized.append(mask_resized)
+            
+            # Create segmentation overlay using processed masks
             muscle_overlay = create_segmentation_overlay(
-                muscle_norm, segmap_resized, seg_labels, segments_to_analyze,
-                top_k_masks_dict=top_k_masks, frame_idx=i
+                muscle_norm, frame_processed_masks_resized, seg_labels, segments_to_analyze,
+                SEGMENT_COLORS, SEGMENT_BLEND_ORIGINAL, SEGMENT_BLEND_COLOR,
+                TOP_K_HIGHLIGHT_FACTOR, top_k_masks, i
             )
             
             # Get pre-rendered trace panel

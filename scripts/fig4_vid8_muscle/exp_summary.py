@@ -35,6 +35,7 @@ from spotlight_tools.postprocessing.muscle import (
 from sppaper.common.muscle import (
     compute_muscle_activity,
     compute_delta_f_over_f,
+    create_segmentation_overlay,
 )
 
 # Import configuration
@@ -56,18 +57,19 @@ from figure_config import (
     # Shared settings
     NORM_LOWER_PERCENTILE,
     NORM_UPPER_PERCENTILE,
+    VMAX_SHIFT,
     TOP_K_PIXELS,
     MORPH_KERNEL_SIZE,
     MORPH_N_ITERATIONS,
-    DILATION_KERNEL_SIZE,
+    DILATION_KERNELS,
     BASELINE_WINDOW_SEC,
     SEGMENT_BLEND_ORIGINAL,
     SEGMENT_BLEND_COLOR,
     TOP_K_HIGHLIGHT_FACTOR,
+    SEGMENT_ORDER,
     SEGMENT_COLORS,
     TRACE_LINEWIDTH,
     TRACE_BASELINE_ALPHA,
-    STIM_PERIOD_ALPHA,
 )
 
 
@@ -98,48 +100,6 @@ def parse_stimulation_protocol(protocol):
     return stim_starts, stim_ends
 
 
-def create_segmentation_overlay(muscle_frame, segmap, seg_labels, segments_to_show,
-                               top_k_masks_dict=None, frame_idx=None):
-    """Create RGB image with segmentation overlay (same as video script)."""
-    # Convert grayscale to RGB if needed
-    if len(muscle_frame.shape) == 2:
-        muscle_rgb = cv2.cvtColor(muscle_frame, cv2.COLOR_GRAY2RGB).astype(np.float32)
-    else:
-        muscle_rgb = muscle_frame.astype(np.float32)
-    
-    # Create overlay - vectorized operations
-    for segment_name in segments_to_show:
-        if segment_name not in seg_labels:
-            continue
-        
-        seg_id = seg_labels.index(segment_name)
-        mask = (segmap == seg_id)
-        
-        if not mask.any():  # Skip if segment not present
-            continue
-        
-        # Get color for this segment
-        color_hex = SEGMENT_COLORS.get(segment_name, "#ffffff")
-        color_rgb = np.array(mcolors.to_rgb(color_hex)) * 255
-        
-        # Vectorized blending with configurable weights
-        mask_3d = mask[:, :, np.newaxis]
-        muscle_rgb = np.where(mask_3d, 
-                             SEGMENT_BLEND_ORIGINAL * muscle_rgb + SEGMENT_BLEND_COLOR * color_rgb,
-                             muscle_rgb)
-        
-        # Highlight top k pixels in darker shade (using precomputed masks)
-        if top_k_masks_dict is not None and frame_idx is not None:
-            top_k_mask = top_k_masks_dict.get((frame_idx, segment_name))
-            if top_k_mask is not None and top_k_mask.any():
-                dark_color = color_rgb * TOP_K_HIGHLIGHT_FACTOR
-                # Apply dark color to top k pixels
-                top_k_mask_3d = top_k_mask[:, :, np.newaxis]
-                muscle_rgb = np.where(top_k_mask_3d, dark_color, muscle_rgb)
-    
-    return muscle_rgb.astype(np.uint8)
-
-
 def annotate_image(img, text, font_size=ANNOTATION_FONT_SIZE, 
                    position=ANNOTATION_POSITION, color=ANNOTATION_COLOR):
     """Add text annotation to image."""
@@ -162,9 +122,13 @@ def create_trace_figure(time_sec, traces, segment_names, stim_start_times, stim_
     ax.set_facecolor('white')
     
     n_segments = len(segment_names)
-    offset_spacing = traces.max()
+    # Use nanmax to handle NaN values
+    traces_max = np.nanmax(traces)
+    if np.isnan(traces_max):
+        traces_max = 1.0  # Fallback if all values are NaN
+    offset_spacing = traces_max
     
-    # Plot traces
+    # Plot traces (matplotlib will skip NaN values automatically)
     for j, segment_name in enumerate(segment_names):
         offset = j * offset_spacing
         color = SEGMENT_COLORS.get(segment_name, "#000000")
@@ -176,7 +140,7 @@ def create_trace_figure(time_sec, traces, segment_names, stim_start_times, stim_
         ax.axvspan(start_time, end_time, alpha=0.3, color=STIM_PERIOD_COLOR, zorder=0)
     
     # Mark captured time points with asterisks
-    y_max = (n_segments - 1) * offset_spacing + traces.max() * 0.1
+    y_max = (n_segments - 1) * offset_spacing + traces_max * 0.1
     for i, (capture_time, label) in enumerate(zip(capture_times, capture_labels)):
         # Add asterisk marker at the top
         #ax.plot(capture_time, y_max, marker='*', color='black', markersize=8, zorder=10)
@@ -252,16 +216,21 @@ def generate_figures(exp_folder, segments_to_show, output_folder=None):
     segments_to_analyze = [seg for seg in seg_labels if any(
         s.lower() in seg.lower() for s in segments_to_show
     )]
+    
+    # Sort segments according to canonical order (RF, LF, RM, LM, RH, LH)
+    segments_to_analyze = sorted(segments_to_analyze, 
+                                 key=lambda s: SEGMENT_ORDER.index(s) if s in SEGMENT_ORDER else 999)
+    
     print(f"Analyzing segments: {segments_to_analyze}")
     
-    # Compute muscle activity
+    # Compute muscle activity for ALL frames (we want to see the full trace)
     print("Computing muscle activity...")
-    muscle_activity, top_k_masks = compute_muscle_activity(
+    muscle_activity, top_k_masks, processed_masks_dict = compute_muscle_activity(
         mf_metadata, processed_folder, segmaps, frame_ids,
         seg_labels, segments_to_analyze, duo_yaml, k=TOP_K_PIXELS,
         morph_kernel_size=MORPH_KERNEL_SIZE,
         morph_n_iterations=MORPH_N_ITERATIONS,
-        dilation_kernel_size=DILATION_KERNEL_SIZE,
+        dilation_kernels=DILATION_KERNELS,
         bilateral_d=BILATERAL_D,
         bilateral_sigma_color=BILATERAL_SIGMA_COLOR,
         bilateral_sigma_space=BILATERAL_SIGMA_SPACE
@@ -305,8 +274,8 @@ def generate_figures(exp_folder, segments_to_show, output_folder=None):
     
     # Compute normalization percentiles ONCE (not per frame!)
     vmin = np.percentile(all_frames_sample, NORM_LOWER_PERCENTILE)
-    vmax = np.percentile(all_frames_sample, NORM_UPPER_PERCENTILE)
-    print(f"Normalization range: {vmin:.1f} to {vmax:.1f}")
+    vmax = np.percentile(all_frames_sample, NORM_UPPER_PERCENTILE) + VMAX_SHIFT
+    print(f"Normalization range: {vmin:.1f} to {vmax:.1f} (with VMAX_SHIFT={VMAX_SHIFT})")
     
     del all_pixel_values  # Free memory
     del all_frames_sample
@@ -358,19 +327,25 @@ def generate_figures(exp_folder, segments_to_show, output_folder=None):
         bf_frame_id = match_muscle_frameid_to_behavior_frameid(
             mf_id, dual_recording_timing_metadata_path=duo_yaml
         )
-        segmap = segmaps[frame_ids == bf_frame_id][0]
         
-        # Resize segmap to match muscle frame
+        # Get processed masks for this frame
+        frame_processed_masks = processed_masks_dict[frame_idx]
+        
+        # Resize processed masks to muscle frame dimensions
         frame_height, frame_width = muscle_norm.shape
-        segmap_resized = cv2.resize(
-            segmap, (frame_width, frame_height),
-            interpolation=cv2.INTER_NEAREST
-        )
+        frame_processed_masks_resized = []
+        for mask in frame_processed_masks:
+            mask_resized = cv2.resize(
+                mask.astype(np.uint8), (frame_width, frame_height),
+                interpolation=cv2.INTER_NEAREST
+            )
+            frame_processed_masks_resized.append(mask_resized)
         
-        # Create muscle overlay (using precomputed top-k masks)
+        # Create muscle overlay using processed masks
         muscle_overlay = create_segmentation_overlay(
-            muscle_norm, segmap_resized, seg_labels, segments_to_analyze,
-            top_k_masks_dict=top_k_masks, frame_idx=frame_idx
+            muscle_norm, frame_processed_masks_resized, seg_labels, segments_to_analyze,
+            SEGMENT_COLORS, SEGMENT_BLEND_ORIGINAL, SEGMENT_BLEND_COLOR,
+            TOP_K_HIGHLIGHT_FACTOR, top_k_masks, frame_idx
         )
         muscle_overlay_annotated = annotate_image(muscle_overlay, f"Stim {time_offset:+.3f}s")
         cv2.imwrite(str(output_folder / f"muscle_overlay_offset{offset:03d}.png"),
@@ -388,12 +363,19 @@ def generate_figures(exp_folder, segments_to_show, output_folder=None):
             if behavior_frame is None:
                 print(f"  Warning: Could not load behavior frame {behavior_frame_path}, skipping")
             else:
-                # Resize segmap to match behavior frame
+                # Get original segmap for behavior overlay (not dilated)
+                segmap = segmaps[frame_ids == bf_frame_id][0]
                 behavior_height, behavior_width = behavior_frame.shape[:2] if len(behavior_frame.shape) == 3 else behavior_frame.shape
-                segmap_behavior = cv2.resize(
-                    segmap, (behavior_width, behavior_height),
-                    interpolation=cv2.INTER_NEAREST
-                )
+                
+                # Convert original segmap to list of masks (one per segment)
+                original_masks_behavior = []
+                for seg_id in range(len(seg_labels)):
+                    mask = (segmap == seg_id).astype(np.uint8)
+                    mask_resized = cv2.resize(
+                        mask, (behavior_width, behavior_height),
+                        interpolation=cv2.INTER_NEAREST
+                    )
+                    original_masks_behavior.append(mask_resized)
                 
                 # Convert to grayscale if needed
                 if len(behavior_frame.shape) == 3:
@@ -401,10 +383,11 @@ def generate_figures(exp_folder, segments_to_show, output_folder=None):
                 else:
                     behavior_gray = behavior_frame
                 
-                # Create behavior overlay (no top-k highlighting)
+                # Create behavior overlay using original masks (no top-k highlighting)
                 behavior_overlay = create_segmentation_overlay(
-                    behavior_gray, segmap_behavior, seg_labels, segments_to_analyze,
-                    top_k_masks_dict=None, frame_idx=None
+                    behavior_gray, original_masks_behavior, seg_labels, segments_to_analyze,
+                    SEGMENT_COLORS, SEGMENT_BLEND_ORIGINAL, SEGMENT_BLEND_COLOR,
+                    TOP_K_HIGHLIGHT_FACTOR, None, None
                 )
                 behavior_overlay_annotated = annotate_image(behavior_overlay, f"Stim {time_offset:+.3f}s")
                 cv2.imwrite(str(output_folder / f"behavior_overlay_offset{offset:03d}.png"),
@@ -419,7 +402,7 @@ def generate_figures(exp_folder, segments_to_show, output_folder=None):
         stim_start_times, stim_end_times,
         capture_times, capture_labels
     )
-    fig.savefig(output_folder / "muscle_activity_traces.png", dpi=FIGURE_DPI, bbox_inches='tight')
+    fig.savefig(output_folder / "muscle_activity_traces.pdf", bbox_inches='tight')
     plt.close(fig)
     
     print(f"\nAll figures saved to: {output_folder}")
