@@ -13,7 +13,7 @@ BILATERAL_SIGMA_SPACE = 150  # Filter sigma in the coordinate space (larger = mo
 # IMAGE NORMALIZATION SETTINGS
 # ============================================================================
 NORM_LOWER_PERCENTILE = 50  # Lower percentile for image normalization
-NORM_UPPER_PERCENTILE = 100.0  # Upper percentile for image normalization
+NORM_UPPER_PERCENTILE = 98.0  # Upper percentile for image normalization
 VMAX_SHIFT = 20.0  # Additional shift added to vmax for better contrast in visualizations
 
 # ============================================================================

@@ -250,11 +250,18 @@ def generate_figures(exp_folder, segments_to_show, output_folder=None):
             stim_start_times.append((start_time[0] - bf_metadata["received_time_us"].iloc[0]) / 1e6)
             stim_end_times.append((end_time[0] - bf_metadata["received_time_us"].iloc[0]) / 1e6)
     
-    # Compute ΔF/F₀
+    # Compute ΔF/F₀ (treating all stimulations as valid)
     print("Computing ΔF/F₀...")
+    # Convert baseline window to behavior frames
+    behavior_fps = exp_parameters["behavior_fps"]
+    baseline_window_frames = int(BASELINE_WINDOW_SEC * behavior_fps)
+    
     delta_f_over_f = compute_delta_f_over_f(
-        muscle_activity, time_sec.values, stim_start_times, stim_end_times,
-        baseline_window_sec=BASELINE_WINDOW_SEC
+        muscle_activity, mf_metadata, bf_metadata,
+        stim_start_frames, stim_end_frames,
+        baseline_window_frames,
+        valid_stim_mask=None,  # All stimulations considered valid
+        duo_yaml=duo_yaml
     )
     
     # Load all muscle frames to compute global normalization percentiles AND cache them

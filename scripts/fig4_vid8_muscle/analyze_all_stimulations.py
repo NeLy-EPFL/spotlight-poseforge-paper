@@ -16,6 +16,8 @@ Usage:
 from pathlib import Path
 import argparse
 import sys
+import glob
+import zipfile
 
 # Add src directory to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent.parent / "src"))
@@ -34,6 +36,7 @@ from tqdm import tqdm
 from spotlight_tools.postprocessing.muscle import (
     match_muscle_frameid_to_behavior_frameid,
     match_behavior_frameid_to_muscle_frameid,
+    get_behavior_muscle_sync_ratio,
 )
 from sppaper.common.muscle import (
     compute_muscle_activity_for_frames,
@@ -91,8 +94,8 @@ def check_stage_movement(bf_metadata, start_frame, end_frame, max_distance_mm=1.
     
     Args:
         bf_metadata: Behavior frames metadata
-        start_frame: Start frame (can be extended before stim start)
-        end_frame: End frame (can be extended after stim end)
+        start_frame: Start behavior frame ID
+        end_frame: End behavior frame ID
         max_distance_mm: Maximum allowed movement
     
     Returns:
@@ -127,6 +130,27 @@ def check_stage_movement(bf_metadata, start_frame, end_frame, max_distance_mm=1.
     return moved_too_much, total_distance, reason
 
 
+def ensure_metadata_unzipped(exp_folder):
+    """Unzip metadata.zip if it exists and metadata folder is empty or missing files."""
+    exp_folder = Path(exp_folder)
+    metadata_folder = exp_folder / "metadata"
+    metadata_zip = exp_folder / "metadata.zip"
+    
+    # Check if we need to unzip
+    needs_unzip = False
+    if metadata_zip.exists():
+        if not metadata_folder.exists():
+            needs_unzip = True
+        elif not (metadata_folder / "experiment_parameters.yaml").exists():
+            needs_unzip = True
+    
+    if needs_unzip:
+        print(f"  Unzipping metadata for {exp_folder.name}...")
+        with zipfile.ZipFile(metadata_zip, 'r') as zip_ref:
+            zip_ref.extractall(exp_folder)
+        print(f"  Metadata extracted successfully")
+
+
 def load_experiment_data(exp_folder, segments_to_show):
     """Load all necessary data for an experiment.
     
@@ -134,6 +158,10 @@ def load_experiment_data(exp_folder, segments_to_show):
         Dictionary with all loaded data
     """
     exp_folder = Path(exp_folder)
+    
+    # Ensure metadata is unzipped if necessary
+    ensure_metadata_unzipped(exp_folder)
+    
     processed_folder = exp_folder / "processed"
     metadata_folder = exp_folder / "metadata"
     
@@ -190,44 +218,59 @@ def load_experiment_data(exp_folder, segments_to_show):
     }
 
 
-def extract_window_around_stimulation(muscle_activity, time_sec, stim_start_time, stim_end_time, window_sec=1.0):
-    """Extract a time window of muscle activity around stimulation.
+def extract_window_around_stimulation(muscle_activity, mf_metadata, time_sec,
+                                       stim_start_time, 
+                                       window_start_mf, window_end_mf):
+    """Extract a window of muscle activity around stimulation using muscle frame indices.
     
-    Window extends from (stim_start - window_sec) to (stim_end + window_sec).
+    Args:
+        muscle_activity: Full muscle activity array (n_muscle_frames, n_segments)
+        mf_metadata: Muscle frames metadata
+        time_sec: Time axis for all muscle frames (relative to recording start)
+        stim_start_time: Stimulation start time in seconds (for relative time computation)
+        window_start_mf: Window start in muscle frame ID
+        window_end_mf: Window end in muscle frame ID
     
     Returns:
         window_activity: (n_frames_window, n_segments) array
-        window_time: time relative to stimulation onset
-        indices: original indices in full trace
+        window_time: time relative to stimulation onset (in seconds)
+        window_mf_ids: muscle frame IDs in the window
     """
-    # Find indices within window: from (start - window_sec) to (end + window_sec)
-    window_start = stim_start_time - window_sec
-    window_end = stim_end_time + window_sec
-    window_mask = (time_sec >= window_start) & (time_sec <= window_end)
-    indices = np.where(window_mask)[0]
+    # Find muscle frames within window
+    window_mask = (
+        (mf_metadata["muscle_frame_id"] >= window_start_mf) & 
+        (mf_metadata["muscle_frame_id"] <= window_end_mf)
+    )
+    window_mf_ids = mf_metadata.loc[window_mask, "muscle_frame_id"].values
     
-    if len(indices) == 0:
+    if len(window_mf_ids) == 0:
         return None, None, None
     
-    window_activity = muscle_activity[indices, :]
-    window_time = time_sec[indices] - stim_start_time  # Time relative to stim onset
+    # Get corresponding indices in the muscle_activity array
+    indices = mf_metadata.loc[window_mask].index.values
     
-    return window_activity, window_time, indices
+    window_activity = muscle_activity[indices, :]
+    
+    # Compute time relative to stim start
+    window_time = time_sec[indices] - stim_start_time
+    
+    return window_activity, window_time, window_mf_ids
 
 
-def analyze_experiment(exp_folder, segments_to_show, output_folder=None, 
-                      max_movement_mm=1.0, window_sec=1.0):
+def analyze_experiment(exp_folder, segments_to_show, output_folder,
+                      max_movement_mm, window_sec):
     """Analyze all stimulations in an experiment."""
 
     exp_folder = Path(exp_folder)
     
-    if output_folder is None:
-        output_folder = exp_folder / "stimulation_analysis"
-    output_folder = Path(output_folder)
-    output_folder.mkdir(parents=True, exist_ok=True)
-    
-    print(f"Analyzing experiment: {exp_folder.name}")
-    print(f"Saving results to: {output_folder}")
+    # Only create output folder if explicitly provided (not when called from analyze_all_experiments)
+    if output_folder is not None:
+        output_folder = Path(output_folder)
+        output_folder.mkdir(parents=True, exist_ok=True)
+        print(f"Analyzing experiment: {exp_folder.name}")
+        print(f"Saving results to: {output_folder}")
+    else:
+        print(f"Analyzing experiment: {exp_folder.name}")
     
     # Load all experiment data using common function
     print("Loading experiment data...")
@@ -256,35 +299,24 @@ def analyze_experiment(exp_folder, segments_to_show, output_folder=None,
     print(f"Found {len(stim_start_frames)} stimulations on channel {channel}")
     print(f"Analyzing segments: {segments_to_analyze}")
     
-    # Compute time axis first
-    time_sec = (mf_metadata["received_time_us"] - 
-                mf_metadata["received_time_us"].iloc[0]) / 1e6
+    # Convert window from seconds to behavior frames
+    analysis_window_frames  = int(BASELINE_WINDOW_SEC * behavior_fps)
+    display_window_frames = int(window_sec * behavior_fps)
+    muscle_activity_window_frames = max(analysis_window_frames, display_window_frames)
+
+    # Find all muscle frame indices needed (union of windows around all stimulations)
+    muscle_frame_indices_set = set()
     
-    # Convert stimulation frames to times
-    stim_start_times = []
-    stim_end_times = []
     for start_frame, end_frame in zip(stim_start_frames, stim_end_frames):
-        start_time = bf_metadata[bf_metadata["behavior_frame_id"] == start_frame]["received_time_us"].values
-        end_time = bf_metadata[bf_metadata["behavior_frame_id"] == end_frame]["received_time_us"].values
-        if len(start_time) > 0 and len(end_time) > 0:
-            stim_start_times.append((start_time[0] - bf_metadata["received_time_us"].iloc[0]) / 1e6)
-            stim_end_times.append((end_time[0] - bf_metadata["received_time_us"].iloc[0]) / 1e6)
-    
-    # Find all frame indices needed (union of windows around all stimulations)
-    # Use baseline_window_sec + window_sec to ensure we have enough data
-    frame_indices_set = set()
-    
-    for stim_start_time, stim_end_time in zip(stim_start_times, stim_end_times):
-        # Find frames from (start - baseline - window) to (end + window)
-        window_start = stim_start_time - BASELINE_WINDOW_SEC - window_sec
-        window_end = stim_end_time + window_sec
-        window_mask = (time_sec.values >= window_start) & (time_sec.values <= window_end)
-        indices = np.where(window_mask)[0]
-        frame_indices_set.update(indices.tolist())
-    
+        muscle_frame_start = match_behavior_frameid_to_muscle_frameid(
+            start_frame - muscle_activity_window_frames, method="floor", dual_recording_timing_metadata_path=duo_yaml)
+        muscle_frame_end = match_behavior_frameid_to_muscle_frameid(
+            end_frame + muscle_activity_window_frames, method="floor", dual_recording_timing_metadata_path=duo_yaml) + 1
+        muscle_frame_indices_set.update(range(muscle_frame_start, muscle_frame_end))
+
     # Convert to sorted list
-    frame_indices_list = sorted(list(frame_indices_set))
-    print(f"Computing muscle activity for {len(frame_indices_list)} frames " +
+    frame_indices_list = sorted(list(muscle_frame_indices_set))
+    print(f"Computing muscle activity for {len(frame_indices_list)} muscle frames " +
           f"(out of {len(mf_metadata)} total, {100*len(frame_indices_list)/len(mf_metadata):.1f}%)")
     
     # Compute muscle activity only for required frames
@@ -304,86 +336,131 @@ def analyze_experiment(exp_folder, segments_to_show, output_folder=None,
         bilateral_sigma_color=BILATERAL_SIGMA_COLOR,
         bilateral_sigma_space=BILATERAL_SIGMA_SPACE
     )
-    
+        
     # Create full-sized array with NaNs, then fill in computed values
     muscle_activity = np.full((len(mf_metadata), len(segments_to_analyze)), np.nan, dtype=np.float32)
     muscle_activity[frame_indices_list, :] = muscle_activity_subset
-    
-    # Compute ΔF/F₀ (only uses frames we computed)
-    print("Computing ΔF/F₀...")
-    delta_f_over_f = compute_delta_f_over_f(
-        muscle_activity, time_sec.values, stim_start_times, stim_end_times,
-        baseline_window_sec=BASELINE_WINDOW_SEC
-    )
-    
-    # Analyze each stimulation
-    print("\nAnalyzing individual stimulations...")
-    valid_stimulations = []
+
+    # Check which stimulations are valid (stage didn't move too much)
+    print("\nChecking stage movement...")
+    valid_stim_mask = np.zeros(len(stim_start_frames), dtype=bool)
+    stage_distances = []
     justifications = []
     
-    for i, (start_frame, end_frame, stim_time) in enumerate(
-        zip(stim_start_frames, stim_end_frames, stim_start_times)
-    ):
-        # Check stage movement in extended window: [start - window_sec, end + window_sec]
-        window_start_frame = start_frame - int(window_sec * behavior_fps)
-        window_end_frame = end_frame + int(window_sec * behavior_fps)
+    for i, (start_frame, end_frame) in enumerate(zip(stim_start_frames, stim_end_frames)):
+        # Check stage movement in display window
+        window_start_frame = start_frame - display_window_frames
+        window_end_frame = end_frame + display_window_frames
         moved_in_window, window_distance, window_reason = check_stage_movement(
             bf_metadata, window_start_frame, window_end_frame, max_movement_mm
         )
         
-        included = not moved_in_window
-        if included:
-            justification = f"Stim {i+1}: INCLUDED, {window_distance:.3f}mm\n"
-        else:
-            justification = f"Stim {i+1}: EXCLUDED, {window_distance:.3f}mm\n"
-        justification += f"  In window [{-window_sec:.1f}s to +{window_sec:.1f}s]: {window_reason}\n"
+        valid_stim_mask[i] = not moved_in_window
+        stage_distances.append(window_distance)
         
+        status = "INCLUDED" if valid_stim_mask[i] else "EXCLUDED"
+        justification = f"Stim {i+1}: {status}, {window_distance:.3f}mm\n"
+        justification += f"  Window [{-window_sec:.1f}s to +{window_sec:.1f}s]: {window_reason}\n"
         justifications.append(justification)
-        
-        if included:
-            # Extract window around this stimulation
-            stim_end_time = stim_end_times[i] if i < len(stim_end_times) else stim_time + 0.1
-            window_activity, window_time, indices = extract_window_around_stimulation(
-                delta_f_over_f, time_sec.values, stim_time, stim_end_time, window_sec
+        justifications.append("")  # Empty line
+    
+    print(f"Valid stimulations: {np.sum(valid_stim_mask)}/{len(valid_stim_mask)}")
+    
+    # Compute ΔF/F₀ using BASELINE_WINDOW_SEC (converted to frames)
+    print(f"Computing ΔF/F₀ (baseline: {BASELINE_WINDOW_SEC}s = {analysis_window_frames} frames)...")
+    
+    delta_f_over_f = compute_delta_f_over_f(
+        muscle_activity, mf_metadata, bf_metadata,
+        stim_start_frames, stim_end_frames,
+        analysis_window_frames,
+        valid_stim_mask=valid_stim_mask,
+        duo_yaml=duo_yaml
+    )
+    
+    # Compute time axis for display
+    time_sec = (mf_metadata["received_time_us"] - 
+                mf_metadata["received_time_us"].iloc[0]) / 1e6
+    
+    # Convert stim frames to times for display
+    stim_start_times = []
+    stim_end_times = []
+    for start_frame, end_frame in zip(stim_start_frames, stim_end_frames):
+        start_time = bf_metadata[bf_metadata["behavior_frame_id"] == start_frame]["received_time_us"].values
+        end_time = bf_metadata[bf_metadata["behavior_frame_id"] == end_frame]["received_time_us"].values
+        if len(start_time) > 0 and len(end_time) > 0:
+            stim_start_times.append((start_time[0] - bf_metadata["received_time_us"].iloc[0]) / 1e6)
+            stim_end_times.append((end_time[0] - bf_metadata["received_time_us"].iloc[0]) / 1e6)
+    
+    # Extract display windows for valid stimulations
+    print(f"\nExtracting {window_sec}s windows for valid stimulations...")
+    valid_stimulations = []
+    
+    for i, (start_frame, end_frame) in enumerate(zip(stim_start_frames, stim_end_frames)):
+        if valid_stim_mask[i]:
+            # Define window in behavior frames
+            window_start_bf = start_frame - display_window_frames
+            window_end_bf = end_frame + display_window_frames
+            
+            # Convert to muscle frames (floor + 1 for end)
+            window_start_mf = match_behavior_frameid_to_muscle_frameid(
+                window_start_bf, method="floor", dual_recording_timing_metadata_path=duo_yaml
+            )
+            window_end_mf = match_behavior_frameid_to_muscle_frameid(
+                window_end_bf, method="floor", dual_recording_timing_metadata_path=duo_yaml
+            ) + 1
+            
+            # Extract window
+            stim_start_time = stim_start_times[i]
+            window_activity, window_time, window_mf_ids = extract_window_around_stimulation(
+                delta_f_over_f, mf_metadata, time_sec.values,
+                stim_start_time, window_start_mf, window_end_mf
             )
             
             if window_activity is not None:
+                stim_end_time = stim_end_times[i] if i < len(stim_end_times) else stim_start_time + 0.1
+                
                 valid_stimulations.append({
                     'exp_name': exp_folder.name,
                     'start_frame': start_frame,
                     'end_frame': end_frame,
-                    'stim_time': stim_time,
-                    'stim_duration': stim_end_times[i] - stim_start_times[i] if i < len(stim_end_times) else 0,
+                    'stim_time': stim_start_time,
+                    'stim_duration': stim_end_time - stim_start_time,
                     'window_activity': window_activity,
                     'window_time': window_time,
-                    'distance': window_distance,
+                    'distance': stage_distances[i],
                 })
-            
-        justifications.append("")  # Empty line between stimulations
     
     return valid_stimulations, justifications, segments_to_analyze
 
 
-def find_experiment_folders(data_folder):
-    """Find all experiment folders in data_folder."""
-    data_folder = Path(data_folder)
-    exp_folders = []
+def find_experiment_folders(data_folder_pattern):
+    """Find all experiment folders matching the pattern.
     
-    # Look for folders with "processed" subfolder
-    for item in data_folder.iterdir():
-        if item.is_dir():
-            if (item / "processed").exists():
-                exp_folders.append(item)
+    Args:
+        data_folder_pattern: Can be a direct path or a glob pattern
+    
+    Returns:
+        List of experiment folder paths that contain a 'processed' subfolder
+    """
+    # Use glob to expand the pattern
+    matching_paths = glob.glob(str(data_folder_pattern))
+    
+    exp_folders = []
+    for path in matching_paths:
+        path = Path(path)
+        if path.is_dir() and (path / "processed").exists():
+            exp_folders.append(path)
     
     return sorted(exp_folders)
 
 
 def aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder, 
-                      window_sec, aggregate_by='all'):
+                      window_sec, aggregate_by='all', max_movement_mm=1.0):
     """Create aggregated summary figures.
     
     Args:
         aggregate_by: 'all' = all flies together, 'fly' = separate per fly, 'trial' = separate per experiment
+        max_movement_mm: Maximum allowed stage movement threshold
     """
     if len(all_valid_stims) == 0:
         print("WARNING: No valid stimulations found!")
@@ -414,6 +491,10 @@ def aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder,
     
     # Create figure for each group
     for group_name, group_stims in groups.items():
+        if len(group_stims) == 0:
+            print(f"\nSkipping {group_name}: no valid stimulations")
+            continue
+            
         print(f"\nCreating figure for {group_name} with {len(group_stims)} stimulations...")
         
         n_segments = len(segments_to_analyze)
@@ -423,7 +504,7 @@ def aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder,
         fig, axes = plt.subplots(n_segments, 1, figsize=(fig_width, fig_height), 
                                 sharex=True, squeeze=False)
         
-        # Get average stim duration
+        # Get average stim duration (safe from division by zero since we checked len > 0)
         avg_stim_dur = np.mean([s['stim_duration'] for s in group_stims])
         
         for seg_idx, segment_name in enumerate(segments_to_analyze):
@@ -453,13 +534,20 @@ def aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder,
                 ax.plot(common_time, interp_trace, color=color, alpha=0.2, linewidth=0.6)
             
             # Compute and plot mean trace
-            mean_trace = np.mean(interpolated_traces, axis=0)
-            sem_trace = np.std(interpolated_traces, axis=0) / np.sqrt(len(interpolated_traces))
-            
-            # Plot mean ± SEM
-            ax.plot(common_time, mean_trace, color=color, linewidth=2.5)
-            ax.fill_between(common_time, mean_trace - sem_trace, mean_trace + sem_trace,
-                            color=color, alpha=0.25)
+            if len(interpolated_traces) > 0:
+                mean_trace = np.mean(interpolated_traces, axis=0)
+                
+                # Compute SEM only if we have more than 1 trace
+                if len(interpolated_traces) > 1:
+                    sem_trace = np.std(interpolated_traces, axis=0) / np.sqrt(len(interpolated_traces))
+                else:
+                    sem_trace = np.zeros_like(mean_trace)
+                
+                # Plot mean ± SEM
+                ax.plot(common_time, mean_trace, color=color, linewidth=2.5)
+                if len(interpolated_traces) > 1:
+                    ax.fill_between(common_time, mean_trace - sem_trace, mean_trace + sem_trace,
+                                    color=color, alpha=0.25)
             
             # Mark stimulation period
             ax.axvline(x=0, color='black', linestyle='-', linewidth=0.8, alpha=0.8)
@@ -487,38 +575,53 @@ def aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder,
         
         plt.tight_layout()
         
-        # Save figure
+        # Save figure with hyperparameters in filename
         safe_name = group_name.replace('/', '_')
-        fig_path = output_folder / f"{safe_name}_{len(group_stims)}trials.pdf"
+        fig_path = output_folder / f"{safe_name}_n{len(group_stims)}_win{window_sec}s_maxmov{max_movement_mm}mm_base{BASELINE_WINDOW_SEC}s.pdf"
         fig.savefig(fig_path, bbox_inches='tight')
         plt.close(fig)
         
         print(f"Saved figure to: {fig_path}")
 
 
-def analyze_all_experiments(data_folder, segments_to_show, output_folder=None,
-                           max_movement_mm=1.0, window_sec=1.0, aggregate_by='all'):
-    """Analyze all experiments in data folder."""
-    data_folder = Path(data_folder)
-    
-    if output_folder is None:
-        output_folder = data_folder / f"muscle_analysis_{aggregate_by}"
-    output_folder = Path(output_folder)
-    output_folder.mkdir(parents=True, exist_ok=True)
-    
-    print(f"Analyzing data folder: {data_folder}")
-    print(f"Aggregation rule: {aggregate_by}")
-    print(f"Saving results to: {output_folder}")
+def analyze_all_experiments(data_folder_pattern, segments_to_show, output_folder,
+                           max_movement_mm, window_sec, aggregate_by):
+    """Analyze all experiments matching the data folder pattern."""
     
     # Find all experiment folders
-    exp_folders = find_experiment_folders(data_folder)
+    exp_folders = find_experiment_folders(data_folder_pattern)
+    
+    if len(exp_folders) == 0:
+        print(f"ERROR: No experiment folders found matching pattern: {data_folder_pattern}")
+        return
+    
+    # Determine parent folder from first experiment for output
+    parent_folder = exp_folders[0].parent
+    data_folder_suffix = data_folder_pattern.name if isinstance(data_folder_pattern, Path) else Path(data_folder_pattern).name
+    
+    # Set output folder based on aggregation mode
+    if output_folder is None:
+        if aggregate_by == 'all':
+            # All flies: save to parent folder
+            output_folder = parent_folder / f"muscle_analysis_all_{data_folder_suffix}"
+        elif aggregate_by == 'fly':
+            # Per fly: save to parent folder with nice naming
+            output_folder = parent_folder / f"muscle_analysis_per_fly_{data_folder_suffix}"
+        else:  # aggregate_by == 'trial'
+            # Per trial: will save to individual trial folders later
+            output_folder = None
+    
+    if output_folder is not None:
+        output_folder = Path(output_folder)
+        output_folder.mkdir(parents=True, exist_ok=True)
+    
+    print(f"Analyzing data folder pattern: {data_folder_pattern}")
+    print(f"Aggregation rule: {aggregate_by}")
+    if output_folder:
+        print(f"Saving results to: {output_folder}")
     print(f"\nFound {len(exp_folders)} experiment folders:")
     for exp in exp_folders:
         print(f"  - {exp.name}")
-    
-    if len(exp_folders) == 0:
-        print("ERROR: No experiment folders found!")
-        return
     
     # Analyze each experiment
     all_valid_stims = []
@@ -549,16 +652,55 @@ def analyze_all_experiments(data_folder, segments_to_show, output_folder=None,
             traceback.print_exc()
             continue
     
+    # For per-trial aggregation, save results to individual trial folders
+    if aggregate_by == 'trial':
+        for exp_folder in exp_folders:
+            trial_output = exp_folder / "stimulation_analysis"
+            trial_output.mkdir(parents=True, exist_ok=True)
+            
+            # Filter stimulations for this trial
+            trial_stims = [s for s in all_valid_stims if s['exp_name'] == exp_folder.name]
+            
+            if len(trial_stims) > 0:
+                # Save justifications for this trial
+                trial_just = [j for j in all_justifications if exp_folder.name in j]
+                justification_file = trial_output / "stimulation_summary.txt"
+                with open(justification_file, 'w') as f:
+                    f.write(f"Experiment: {exp_folder.name}\n")
+                    f.write(f"Max movement threshold: {max_movement_mm}mm\n")
+                    f.write(f"Analysis window: [{-window_sec:.1f}s to +{window_sec:.1f}s] relative to stim start/end\n")
+                    f.write(f"Total valid stimulations: {len(trial_stims)}\n")
+                    if segments_to_analyze:
+                        f.write(f"Segments: {', '.join(segments_to_analyze)}\n\n")
+                    f.write("="*80 + "\n")
+                    f.writelines(trial_just)
+                
+                # Create plot for this trial
+                aggregate_and_plot(trial_stims, segments_to_analyze, trial_output,
+                                 window_sec, aggregate_by='trial', max_movement_mm=max_movement_mm)
+                print(f"Saved trial analysis to: {trial_output}")
+        
+        print("\n" + "="*80)
+        print("ANALYSIS COMPLETE!")
+        print(f"Total valid stimulations: {len(all_valid_stims)}")
+        print(f"Results saved to individual trial folders")
+        print("="*80)
+        return
+    
+    # For 'all' and 'fly' aggregation, save to central output folder
     # Save combined justifications
     justification_file = output_folder / "all_stimulations_summary.txt"
     with open(justification_file, 'w') as f:
-        f.write(f"Data folder: {data_folder}\n")
+        f.write(f"Data folder pattern: {data_folder_pattern}\n")
         f.write(f"Aggregation: {aggregate_by}\n")
         f.write(f"Max movement threshold: {max_movement_mm}mm\n")
         f.write(f"Analysis window: [{-window_sec:.1f}s to +{window_sec:.1f}s] relative to stim start/end\n")
         f.write(f"Total experiments: {len(exp_folders)}\n")
         f.write(f"Total valid stimulations: {len(all_valid_stims)}\n")
-        f.write(f"Segments: {', '.join(segments_to_analyze)}\n\n")
+        if segments_to_analyze:
+            f.write(f"Segments: {', '.join(segments_to_analyze)}\n\n")
+        else:
+            f.write(f"Segments: None\n\n")
         f.write("="*80 + "\n")
         f.writelines(all_justifications)
     
@@ -582,7 +724,7 @@ def analyze_all_experiments(data_folder, segments_to_show, output_folder=None,
     
     # Create aggregated figures
     aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder,
-                      window_sec, aggregate_by)
+                      window_sec, aggregate_by, max_movement_mm)
     
     print("\n" + "="*80)
     print("ANALYSIS COMPLETE!")
@@ -622,13 +764,13 @@ def main():
     parser.add_argument(
         "--max_movement",
         type=float,
-        default=1.0,
-        help="Maximum allowed stage movement in mm (default: 1.0)"
+        default=0.5,
+        help="Maximum allowed stage movement in mm (default: 0.5)"
     )
     parser.add_argument(
         "--window",
         type=float,
-        default=1.0,
+        default=0.5,
         help="Time window (in seconds) before stim start and after stim end for analysis (default: 1.0)"
     )
     parser.add_argument(
@@ -649,19 +791,20 @@ def main():
     
     if args.exp_folder:
         # Single experiment analysis
-        valid_stims, justifications, segments = analyze_experiment(
-            args.exp_folder, 
-            args.segments, 
-            args.output_folder,
-            args.max_movement,
-            args.window
-        )
-        
         # Create output folder if not specified
         if args.output_folder is None:
             output_folder = Path(args.exp_folder) / "stimulation_analysis"
         else:
             output_folder = Path(args.output_folder)
+        
+        valid_stims, justifications, segments = analyze_experiment(
+            args.exp_folder, 
+            args.segments, 
+            output_folder,  # Pass the output folder, not None
+            args.max_movement,
+            args.window
+        )
+        
         output_folder.mkdir(parents=True, exist_ok=True)
         
         # Save justifications
@@ -679,7 +822,7 @@ def main():
         # Create plot for this experiment
         if len(valid_stims) > 0:
             aggregate_and_plot(valid_stims, segments, output_folder, 
-                             args.window, aggregate_by='trial')
+                             args.window, aggregate_by='trial', max_movement_mm=args.max_movement)
             print(f"\nAnalysis complete! Results saved to: {output_folder}")
         else:
             print("\nNo valid stimulations found!")
