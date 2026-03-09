@@ -310,11 +310,14 @@ def generate_video(exp_folder, segments_to_show, output_path, max_frames=None):
     first_frame = cached_frames[first_mf_id]
     frame_height, frame_width = first_frame.shape
     
-    # Layout parameters
+    # Get behavior frames folder
+    beh_frames_folder = exp_folder.parent / "spotlight_aligned_and_cropped" / exp_folder.name / "all"
+    
+    # Layout parameters (3 panels on top: behavior, muscle raw, muscle overlay)
     top_panel_width = frame_width
     top_panel_height = frame_height
     trace_panel_height = int(frame_height * TRACE_PANEL_HEIGHT_RATIO)
-    total_width = top_panel_width * 2
+    total_width = top_panel_width * 3  # Changed from 2 to 3
     total_height = top_panel_height + trace_panel_height
     
     # Pre-render all trace panels in parallel (this is the slow part!)
@@ -349,6 +352,55 @@ def generate_video(exp_folder, segments_to_show, output_path, max_frames=None):
             muscle_norm = np.clip((muscle_frame - vmin) / (vmax - vmin + 1e-8), 0, 1)
             muscle_norm = (muscle_norm * 255).astype(np.uint8)
             
+            # Get corresponding behavior frame
+            bf_frame_id = match_muscle_frameid_to_behavior_frameid(
+                mf_id, dual_recording_timing_metadata_path=duo_yaml
+            )
+            behavior_frame_path = beh_frames_folder / f"frame_{bf_frame_id:09d}.jpg"
+            
+            # Load behavior frame
+            if behavior_frame_path.exists():
+                behavior_frame = cv2.imread(str(behavior_frame_path), cv2.IMREAD_UNCHANGED)
+                if behavior_frame is not None:
+                    # Convert to grayscale
+                    if len(behavior_frame.shape) == 3:
+                        behavior_gray = cv2.cvtColor(behavior_frame, cv2.COLOR_BGR2GRAY)
+                    else:
+                        behavior_gray = behavior_frame
+                    
+                    # Get original segmap for behavior overlay (not dilated)
+                    segmap = segmaps[frame_ids == bf_frame_id][0]
+                    behavior_height, behavior_width = behavior_gray.shape
+                    
+                    # Convert original segmap to list of masks (one per segment)
+                    original_masks_behavior = []
+                    for seg_id in range(len(seg_labels)):
+                        mask = (segmap == seg_id).astype(np.uint8)
+                        mask_resized = cv2.resize(
+                            mask, (behavior_width, behavior_height),
+                            interpolation=cv2.INTER_NEAREST
+                        )
+                        original_masks_behavior.append(mask_resized)
+                    
+                    # Create behavior overlay using original masks (no top-k highlighting)
+                    behavior_overlay = create_segmentation_overlay(
+                        behavior_gray, original_masks_behavior, seg_labels, segments_to_analyze,
+                        SEGMENT_COLORS, SEGMENT_BLEND_ORIGINAL, SEGMENT_BLEND_COLOR,
+                        TOP_K_HIGHLIGHT_FACTOR, None, None
+                    )
+                    
+                    # Resize behavior overlay to match muscle frame dimensions
+                    behavior_overlay_resized = cv2.resize(
+                        behavior_overlay, (frame_width, frame_height),
+                        interpolation=cv2.INTER_LINEAR
+                    )
+                else:
+                    # Fallback: black frame
+                    behavior_overlay_resized = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+            else:
+                # Fallback: black frame
+                behavior_overlay_resized = np.zeros((frame_height, frame_width, 3), dtype=np.uint8)
+            
             # Get processed masks for this frame
             frame_processed_masks = processed_masks_dict[i]
             
@@ -372,8 +424,9 @@ def generate_video(exp_folder, segments_to_show, output_path, max_frames=None):
             trace_img = trace_panels[i]
             trace_img_resized = cv2.resize(trace_img, (total_width, trace_panel_height))
             
-            # Compose final frame
+            # Compose final frame (3 panels on top: behavior, muscle raw, muscle overlay)
             top_row = np.hstack([
+                behavior_overlay_resized,
                 cv2.cvtColor(muscle_norm, cv2.COLOR_GRAY2RGB),
                 muscle_overlay
             ])
@@ -384,8 +437,9 @@ def generate_video(exp_folder, segments_to_show, output_path, max_frames=None):
             final_frame_pil = Image.fromarray(final_frame)
             draw = ImageDraw.Draw(final_frame_pil)
             
-            draw.text((20, 20), "Raw", fill=(255, 255, 255))
-            draw.text((top_panel_width + 20, 20), "With Segmentation",
+            draw.text((20, 20), "Behavior", fill=(255, 255, 255))
+            draw.text((top_panel_width + 20, 20), "Muscle Raw", fill=(255, 255, 255))
+            draw.text((top_panel_width * 2 + 20, 20), "Muscle + ROI",
                      fill=(255, 255, 255))
             
             final_frame = np.array(final_frame_pil)
