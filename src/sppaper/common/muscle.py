@@ -249,7 +249,7 @@ def compute_muscle_activity_for_frames(mf_metadata, processed_folder, segmaps, s
     n_frames = len(frame_indices)
     n_segments = len(segments_to_analyze)
     
-    muscle_activity = np.zeros((n_frames, n_segments), dtype=np.float32)
+    muscle_activity = np.ones((n_frames, n_segments), dtype=np.float32)*np.nan
     top_k_masks = {}
     processed_masks_dict = {}  # Store processed masks for each frame
     segment_ids = [seg_labels.index(seg) for seg in segments_to_analyze]
@@ -307,6 +307,9 @@ def compute_muscle_activity_for_frames(mf_metadata, processed_folder, segmaps, s
                 flat_pixels = segment_pixels.flatten()
                 top_k_values = np.partition(flat_pixels, -k)[-k:]
                 muscle_activity[out_idx, j] = top_k_values.mean()
+                if top_k_values.mean() <= 0:
+                    print(f"Warning: Mean of top-k pixels is non-positive for frame {frame_idx}, segment {segments_to_analyze[j]}")
+                    print(f"Top-k values: {top_k_values}")
                 
                 # Store top-k pixel mask using the threshold
                 threshold = top_k_values.min()  # Minimum of top-k is the threshold
@@ -315,56 +318,102 @@ def compute_muscle_activity_for_frames(mf_metadata, processed_folder, segmaps, s
                 top_k_masks[(out_idx, segment_name)] = top_k_mask
             else:
                 # Not enough pixels, just use mean of all
-                muscle_activity[out_idx, j] = segment_pixels.mean() if len(segment_pixels) > 0 else 0.0
+                muscle_activity[out_idx, j] = segment_pixels.mean() if len(segment_pixels) > 0 else np.nan
     
     return muscle_activity, top_k_masks, processed_masks_dict
 
 
-def compute_delta_f_over_f(muscle_activity, time_sec, stim_start_times, 
-                           stim_end_times, baseline_window_sec):
+def compute_delta_f_over_f(muscle_activity, mf_metadata, bf_metadata,
+                           stim_start_frames, stim_end_frames, 
+                           baseline_window_frames, valid_stim_mask=None,
+                           duo_yaml=None):
     """Compute ΔF/F₀ using baseline from periods around stimulation.
     
-    F0 is computed as the minimum of the top-k pixel values in the baseline windows
-    (specified seconds before and after each stimulation).
+    F0 is computed as the minimum of the muscle activity values in the baseline windows
+    (specified frames before and after each stimulation).
     
     Args:
         muscle_activity: (n_frames, n_segments) array of activity values
-        time_sec: Array of time values in seconds
-        stim_start_times: List of stimulation start times in seconds
-        stim_end_times: List of stimulation end times in seconds
-        baseline_window_sec: Duration of baseline window in seconds
+        mf_metadata: Muscle frames metadata DataFrame
+        bf_metadata: Behavior frames metadata DataFrame  
+        stim_start_frames: List of stimulation start frames (behavior frame IDs)
+        stim_end_frames: List of stimulation end frames (behavior frame IDs)
+        baseline_window_frames: Duration of baseline window in behavior frames
+        valid_stim_mask: Boolean array indicating which stimulations are valid.
+                        If None, all stimulations are considered valid. Default: None
+        duo_yaml: Path to dual recording timing metadata YAML file
     
     Returns:
         delta_f_over_f: (n_frames, n_segments) array of ΔF/F₀ values
     """
+    from spotlight_tools.postprocessing.muscle import match_behavior_frameid_to_muscle_frameid
+    
     delta_f_over_f = np.zeros_like(muscle_activity)
     n_segments = muscle_activity.shape[1]
+    
+    # If no mask provided, consider all stimulations valid
+    if valid_stim_mask is None:
+        valid_stim_mask = np.ones(len(stim_start_frames), dtype=bool)
     
     for j in range(n_segments):
         baseline_values = []
         
-        # Collect baseline values around each stimulation
-        for start_time, end_time in zip(stim_start_times, stim_end_times):
-            # Find frames within baseline windows
-            pre_stim_mask = (time_sec >= start_time - baseline_window_sec) & \
-                           (time_sec < start_time)
-            post_stim_mask = (time_sec > end_time) & \
-                            (time_sec <= end_time + baseline_window_sec)
+        # Collect baseline values around each VALID stimulation only
+        for i, (start_frame, end_frame) in enumerate(zip(stim_start_frames, stim_end_frames)):
+            # Skip if stimulation is not valid (stage moved too much)
+            if not valid_stim_mask[i]:
+                continue
             
-            baseline_values.extend(muscle_activity[pre_stim_mask, j].tolist())
-            baseline_values.extend(muscle_activity[post_stim_mask, j].tolist())
-        
-        # F0 is the MINIMUM of baseline values (top-k pixels in baseline windows)
+            # Define baseline windows in behavior frames
+            pre_stim_start_bf = start_frame - baseline_window_frames
+            pre_stim_end_bf = start_frame
+            post_stim_start_bf = end_frame
+            post_stim_end_bf = end_frame + baseline_window_frames
+            
+            # Convert to muscle frames
+            pre_stim_start_mf = match_behavior_frameid_to_muscle_frameid(
+                pre_stim_start_bf, method="floor", dual_recording_timing_metadata_path=duo_yaml
+            )
+            pre_stim_end_mf = match_behavior_frameid_to_muscle_frameid(
+                pre_stim_end_bf, method="floor", dual_recording_timing_metadata_path=duo_yaml
+            )
+            post_stim_start_mf = match_behavior_frameid_to_muscle_frameid(
+                post_stim_start_bf, method="floor", dual_recording_timing_metadata_path=duo_yaml
+            )
+            post_stim_end_mf = match_behavior_frameid_to_muscle_frameid(
+                post_stim_end_bf, method="floor", dual_recording_timing_metadata_path=duo_yaml
+            ) + 1
+            
+            # Create masks for baseline periods
+            pre_stim_mask = (
+                (mf_metadata["muscle_frame_id"] >= pre_stim_start_mf) & 
+                (mf_metadata["muscle_frame_id"] < pre_stim_end_mf)
+            )
+            post_stim_mask = (
+                (mf_metadata["muscle_frame_id"] >= post_stim_start_mf) & 
+                (mf_metadata["muscle_frame_id"] < post_stim_end_mf)
+            )
+            
+            # Collect baseline values (excluding NaNs)
+            pre_vals = muscle_activity[pre_stim_mask.values, j]
+            post_vals = muscle_activity[post_stim_mask.values, j]
+            baseline_values.extend(pre_vals.tolist())
+            baseline_values.extend(post_vals.tolist())
+                
+        # F0 is the MINIMUM of baseline values
         if len(baseline_values) > 0:
-            f0 = np.min(baseline_values)
+            f0 = np.nanmin(baseline_values)
         else:
-            # Fallback: use minimum of entire trace
-            f0 = np.min(muscle_activity[:, j])
+            # Fallback: use minimum of entire trace (excluding NaNs)
+            valid_vals = muscle_activity[:, j]
+            if len(valid_vals) > 0:
+                f0 = np.nanmin(valid_vals)
+            else:
+                f0 = 1.0  # Last resort fallback
         
-        # Avoid division by zero
-        f0 = max(f0, 1e-6)
-        
+        assert f0 > 0, f"F0 is zero or negative for segment {j}, cannot compute ΔF/F₀"
+
         # Compute ΔF/F₀
         delta_f_over_f[:, j] = (muscle_activity[:, j] - f0) / f0
-    
+        
     return delta_f_over_f
