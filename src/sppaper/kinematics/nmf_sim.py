@@ -42,11 +42,9 @@ class NeuroMechFlyReplayManager:
         sample_invkin_snippet: KinematicsSnippet,
         passive_tarsus_stiffness: float,
         passive_tarsus_damping: float,
-        leg_adhesion_gain: float,
     ):
         self.passive_tarsus_stiffness = passive_tarsus_stiffness
         self.passive_tarsus_damping = passive_tarsus_damping
-        self.leg_adhesion_gain = leg_adhesion_gain
         self.dof_idxmap_rec2sim, self.dof_mirror_mask = (
             self._get_dof_mapping_and_mirror_mask(sample_invkin_snippet)
         )
@@ -56,7 +54,7 @@ class NeuroMechFlyReplayManager:
         actuator_gain: float,
         joint_damping: float,
         sliding_friction: float,
-        leg_adhesion_force: float,
+        adhforce_by_leg: dict[str, float],
     ) -> "NeuroMechFlyReplayInstance":
         sim, fly = self._setup_sim_and_fly(
             actuator_gain,
@@ -64,7 +62,7 @@ class NeuroMechFlyReplayManager:
             sliding_friction,
         )
         return NeuroMechFlyReplayInstance(
-            sim, fly, self.dof_idxmap_rec2sim, self.dof_mirror_mask, leg_adhesion_force
+            sim, fly, self.dof_idxmap_rec2sim, self.dof_mirror_mask, adhforce_by_leg
         )
 
     def _setup_sim_and_fly(
@@ -97,7 +95,7 @@ class NeuroMechFlyReplayManager:
             kp=actuator_gain,
             neutral_input=neutral_pose,
         )
-        fly.add_leg_adhesion(self.leg_adhesion_gain)
+        fly.add_leg_adhesion()
 
         # Add visuals
         fly.colorize()
@@ -189,7 +187,7 @@ class NeuroMechFlyReplayInstance:
         fly: Fly,
         dof_idxmap_rec2sim: np.ndarray,
         dof_mirror_mask: np.ndarray,
-        leg_adhesion_force: float,
+        adhforce_by_leg: dict[str, float],
     ) -> None:
         self.sim = sim
         self.fly = fly
@@ -197,13 +195,16 @@ class NeuroMechFlyReplayInstance:
         self.dof_mirror_mask = dof_mirror_mask
         self.bodysegs_order = fly.get_bodysegs_order()
         self.actuated_dofs_order = fly.get_actuated_jointdofs_order(ACTUATOR_TYPE)
-        self.leg_adhesion_force = leg_adhesion_force
+        self.adhforce_by_leg_arr = np.array(
+            [adhforce_by_leg[leg] for leg in fly.get_legs_order()]
+        )
 
     def replay_invkin_snippet(
         self,
         kinematics_snippet: KinematicsSnippet,
         preinterp_medkernel_size: int | None = None,
         preinterp_ratelim: float | None = None,
+        disable_progress: bool | None = True,
     ):
         """Replay a kinematic snippet in the simulation.
 
@@ -212,6 +213,7 @@ class NeuroMechFlyReplayInstance:
             preinterp_medkernel_size: Optional median filter kernel size to apply
                 before interpolation.
             preinterp_ratelim: Optional rate limit to apply before interpolation.
+            disable_progress: Whether to disable the progress bar.
 
         Returns:
             sim_results: Dictionary containing simulation results.
@@ -236,7 +238,7 @@ class NeuroMechFlyReplayInstance:
         fly_name = self.fly.name
         self.sim.set_actuator_inputs(fly_name, ACTUATOR_TYPE, joint_angles_arr[0, :])
         self.sim.warmup(duration_s=0.05)
-        self.sim.set_leg_adhesion_states(fly_name, np.ones(6) * self.leg_adhesion_force)
+        self.sim.set_leg_adhesion_states(fly_name, self.adhforce_by_leg_arr)
         self.sim.warmup(duration_s=0.05)
         body_pos_hist = np.full(
             (nsteps_sim, len(self.bodysegs_order), 3), np.nan, dtype=np.float32
@@ -255,7 +257,7 @@ class NeuroMechFlyReplayInstance:
         contact_tangents_hist = np.full((nsteps_sim, 6, 3), np.nan, dtype=np.float32)
 
         # Run simulation loop
-        for step in trange(nsteps_sim):
+        for step in trange(nsteps_sim, disable=disable_progress):
             target_angles = joint_angles_arr[step, :]
             self.sim.set_actuator_inputs(fly_name, ACTUATOR_TYPE, target_angles)
             self.sim.step()

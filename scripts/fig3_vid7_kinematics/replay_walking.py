@@ -17,11 +17,11 @@ MASK_DENOISE_KERNEL_SIZE_STEPS = int(MASK_DENOISE_KERNEL_SIZE_SEC * DATA_FPS)
 MIN_DURATION_STEPS = int(MIN_DURATION_SEC * DATA_FPS)
 PASSIVE_TARSUS_STIFFNESS = 10
 PASSIVE_TARSUS_DAMPING = 0.5
-LEG_ADHESION_GAIN = {"lf": 1.0, "lm": 1.0, "lh": 0.6, "rf": 1.0, "rm": 1.0, "rh": 0.6}
+
+ADHFORCE_BY_LEG = {"lf": 1.0, "lm": 1.0, "lh": 0.6, "rf": 1.0, "rm": 1.0, "rh": 0.6}
 ACTUATOR_GAIN = 150
 JOINT_DAMPING = 0.5
 SLIDING_FRICTION = 2.0
-LEG_ADHESION_FORCE = 1.0
 
 REPLAY_OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -38,13 +38,12 @@ replay_manager = NeuroMechFlyReplayManager(
     sample_invkin_snippet=invkin_dataset[0],
     passive_tarsus_stiffness=PASSIVE_TARSUS_STIFFNESS,
     passive_tarsus_damping=PASSIVE_TARSUS_DAMPING,
-    leg_adhesion_gain=LEG_ADHESION_GAIN,
 )
 replay_instance = replay_manager.create_sim(
     actuator_gain=ACTUATOR_GAIN,
     joint_damping=JOINT_DAMPING,
     sliding_friction=SLIDING_FRICTION,
-    leg_adhesion_force=LEG_ADHESION_FORCE,
+    adhforce_by_leg=ADHFORCE_BY_LEG,
 )
 
 for i, invkin_snippet in enumerate(invkin_dataset):
@@ -64,7 +63,7 @@ for i, invkin_snippet in enumerate(invkin_dataset):
             "actuator_gain": ACTUATOR_GAIN,
             "joint_damping": JOINT_DAMPING,
             "sliding_friction": SLIDING_FRICTION,
-            "leg_adhesion_force": LEG_ADHESION_FORCE,
+            "adhforce_by_leg": ADHFORCE_BY_LEG,
             "sim_timestep": replay_instance.sim.mj_model.opt.timestep,
         }
         pickle.dump(data, f)
