@@ -45,7 +45,6 @@ TEST_LEG_ADHESION_GAIN = {
 
 # Optimization hyper-parameters
 TURNRATE_WEIGHT = 3
-CONTACT_FORCE_DISP_THRESHOLD = 0.2
 N_WORKERS = 4
 GRF_USE_ZONLY = False  # False = total 3D force magnitude; True = z-component only
 
@@ -128,22 +127,61 @@ def get_adjusted_grf(sim_results, adhesion_force_per_leg, steps_offset, use_zonl
     return grf_ts
 
 
+def soft_f1_score(grf_ts, stance_mask, scale):
+    """Soft (differentiable) F1 score between GRF and kinematic stance mask.
+
+    Uses sigmoid(grf / scale) as a soft contact-probability estimate in [0, 1].
+    grf after adhesion subtraction is naturally signed: positive during stance
+    (real contact load) and negative or near-zero during swing (adhesion removed),
+    so sigmoid maps these to >0.5 and <0.5 respectively without any hard threshold.
+
+    soft F1 = 2 * sum(stance * p) / (sum(stance) + sum(p))
+            where p = sigmoid(grf / scale)
+
+    Returns a value in [0, 1] where 1 is perfect overlap.
+    """
+    p = 1.0 / (1.0 + np.exp(-grf_ts / scale))   # sigmoid, shape (T, n_legs)
+    y = stance_mask.astype(float)
+    tp = np.sum(y * p)
+    denom = np.sum(y) + np.sum(p)
+    return float(2.0 * tp / denom) if denom > 0 else 1.0
+
+
 def compute_contact_error(
-    sim_results, gait_info, adhesion_force_per_leg, steps_offset, threshold, use_zonly: bool
+    sim_results,
+    gait_info,
+    adhesion_force_per_leg,
+    steps_offset,
+    use_zonly: bool,
+    gait_metric: str,
+    iou_contactforce_thr: float,
+    f1_scale: float,
 ):
-    """1 - IOU between GRF-derived contact mask and kinematic stance mask.
+    """Gait contact error between GRF-derived signal and kinematic stance mask.
 
     swing_mask=True means the leg is in swing (claw moving fast on xy-plane),
     so kinematic stance = ~swing_mask.
+
+    Args:
+        gait_metric: "IOU" — 1 - IOU between hard contact mask (grf >= thr) and
+            kinematic stance. "F1" — 1 - soft F1 using sigmoid(grf / f1_scale) as
+            a soft contact probability.
+        iou_contactforce_thr: Hard threshold for IOU mode. Ignored for F1.
+        f1_scale: Sigmoid scale for F1 mode. Ignored for IOU.
     """
     grf_ts = get_adjusted_grf(sim_results, adhesion_force_per_leg, steps_offset, use_zonly)
-    sim_contact_mask = grf_ts >= threshold                      # (T_grf, n_legs)
     kinematic_stance_mask = ~gait_info["swing_mask"]            # (T_kin, n_legs)
-    min_len = min(sim_contact_mask.shape[0], kinematic_stance_mask.shape[0])
-    iou = intersection_over_union(
-        sim_contact_mask[:min_len], kinematic_stance_mask[:min_len]
-    )
-    return 1.0 - iou
+    min_len = min(grf_ts.shape[0], kinematic_stance_mask.shape[0])
+    grf_ts = grf_ts[:min_len]
+    kinematic_stance_mask = kinematic_stance_mask[:min_len]
+
+    if gait_metric == "IOU":
+        sim_contact_mask = grf_ts >= iou_contactforce_thr
+        return 1.0 - intersection_over_union(sim_contact_mask, kinematic_stance_mask)
+    elif gait_metric == "F1":
+        return 1.0 - soft_f1_score(grf_ts, kinematic_stance_mask, f1_scale)
+    else:
+        raise ValueError(f"Unknown gait_metric {gait_metric!r}. Choose 'IOU' or 'F1'.")
 
 
 def save_sim_data(output_path, kinematic_snippet, sim_results, replay_manager,
@@ -175,10 +213,12 @@ def make_debug_plots(
     sim_results,
     gait_info,
     adhesion_force_per_leg,
-    contact_force_disp_threshold,
     t_range,
     steps_offset,
     use_zonly: bool,
+    gait_metric: str,
+    iou_contactforce_thr: float,
+    f1_scale: float,
 ):
     """Save three debug outputs: replay video, trajectory comparison, GRF vs gait."""
 
@@ -201,45 +241,40 @@ def make_debug_plots(
     # 3. Per-leg GRF time series vs kinematic gait diagram
     print("  Generating GRF vs gait figure...")
     grf_ts = get_adjusted_grf(sim_results, adhesion_force_per_leg, steps_offset, use_zonly)
-    sim_contact_mask = grf_ts >= contact_force_disp_threshold   # True = sim in contact
-    kinematic_stance_mask = ~gait_info["swing_mask"]            # True = kinematic stance
+    kinematic_stance_mask = ~gait_info["swing_mask"]
     min_len = min(grf_ts.shape[0], kinematic_stance_mask.shape[0])
     t_ax = np.arange(min_len) / DATA_FPS
 
+    if gait_metric == "IOU":
+        sim_contact_mask = grf_ts[:min_len] >= iou_contactforce_thr
+        title_suffix = f"IOU mode  threshold={iou_contactforce_thr}"
+    else:
+        soft_p = 1.0 / (1.0 + np.exp(-grf_ts[:min_len] / f1_scale))
+        title_suffix = f"F1 mode  scale={f1_scale}"
+
     fig, axes = plt.subplots(len(LEGS), 1, figsize=(10, 9), sharex=True)
     for i, (ax, leg) in enumerate(zip(axes, LEGS)):
-        # GRF trace
-        ax.plot(
-            t_ax, grf_ts[:min_len, i],
-            color="steelblue", lw=0.9, label="GRF − adhesion"
-        )
-        ax.axhline(
-            contact_force_disp_threshold,
-            color="steelblue", ls="--", lw=0.7, alpha=0.6, label="threshold"
-        )
-        # Sim contact (from GRF)
-        ax.fill_between(
-            t_ax, 0, 1,
-            where=sim_contact_mask[:min_len, i],
-            transform=ax.get_xaxis_transform(),
-            alpha=0.25, color="steelblue", label="sim contact"
-        )
-        # Kinematic stance (from claw speed)
-        ax.fill_between(
-            t_ax, 0, 1,
-            where=kinematic_stance_mask[:min_len, i],
-            transform=ax.get_xaxis_transform(),
-            alpha=0.25, color="tomato", label="kin. stance"
-        )
+        ax.plot(t_ax, grf_ts[:min_len, i], color="steelblue", lw=0.9, label="GRF − adhesion")
+
+        if gait_metric == "IOU":
+            ax.axhline(iou_contactforce_thr, color="steelblue", ls="--", lw=0.7, alpha=0.6,
+                       label="threshold")
+            ax.fill_between(t_ax, 0, 1, where=sim_contact_mask[:, i],
+                            transform=ax.get_xaxis_transform(),
+                            alpha=0.25, color="steelblue", label="sim contact")
+        else:
+            ax.plot(t_ax, soft_p[:, i], color="darkorange", lw=0.9, ls="--",
+                    label="sigmoid(grf/scale)")
+
+        ax.fill_between(t_ax, 0, 1, where=kinematic_stance_mask[:min_len, i],
+                        transform=ax.get_xaxis_transform(),
+                        alpha=0.25, color="tomato", label="kin. stance")
         ax.set_ylabel(leg.upper(), rotation=0, labelpad=30, va="center")
         if i == 0:
             ax.legend(fontsize=7, ncol=4, loc="upper right")
 
     axes[-1].set_xlabel("Time within t_range (s)")
-    fig.suptitle(
-        f"GRF vs kinematic stance — debug test run\n"
-        f"threshold={contact_force_disp_threshold}"
-    )
+    fig.suptitle(f"GRF vs kinematic stance — debug test run\n{title_suffix}")
     fig.tight_layout()
     fig.savefig(output_path / "grf_vs_gait_debug.pdf")
     plt.close(fig)
@@ -258,8 +293,10 @@ def _optimization_worker(
     t_range,
     output_basedir,
     turnrate_weight,
-    contact_force_disp_threshold,
     use_zonly,
+    gait_metric,
+    iou_contactforce_thr,
+    f1_scale,
     n_trials_per_worker,
     sampler_name,
 ):
@@ -316,13 +353,17 @@ def _optimization_worker(
         obj1 = compute_traj_error(trajs_info, turnrate_weight)
 
         gait_info = get_gait_info(trial_dir, t_range)
+        print("FlyGym LEGS order:     ", [l.upper() for l in LEGS])
+        print("PoseForge legs_order:  ", kinematic_snippet.metadata["legs_order"])
         obj2 = compute_contact_error(
             sim_results,
             gait_info,
             adhesion_force_per_leg,
             steps_offset,
-            contact_force_disp_threshold,
             use_zonly,
+            gait_metric,
+            iou_contactforce_thr,
+            f1_scale,
         )
 
         return obj1, obj2
@@ -350,12 +391,14 @@ def run_optimization(
     study_name,
     storage_url,
     turnrate_weight,
-    contact_force_disp_threshold,
     use_zonly,
+    f1_scale,
     sampler,
     rewrite,
     n_trials,
     n_workers,
+    gait_metric=None,
+    iou_contactforce_thr=None,
 ):
     """Create an Optuna study and run multi-objective optimization across parallel processes.
 
@@ -409,8 +452,10 @@ def run_optimization(
                 t_range,
                 output_basedir,
                 turnrate_weight,
-                contact_force_disp_threshold,
                 use_zonly,
+                gait_metric,
+                iou_contactforce_thr,
+                f1_scale,
                 worker_trial_counts[i],
                 sampler,
             ),
@@ -479,9 +524,9 @@ if __name__ == "__main__":
     # make_debug_plots(
     #     output_path=debug_dir, sim_results=test_sim_results, gait_info=test_gait_info,
     #     adhesion_force_per_leg=test_adhesion_per_leg,
-    #     contact_force_disp_threshold=CONTACT_FORCE_DISP_THRESHOLD,
     #     t_range=WALKING_PERIOD_TIMERANGE, steps_offset=test_steps_offset,
-    #     use_zonly=GRF_USE_ZONLY,
+    #     use_zonly=GRF_USE_ZONLY, gait_metric=GAIT_METRIC,
+    #     iou_contactforce_thr=IOU_CONTACTFORCE_THR, f1_scale=F1_SCALE,
     # )
     # test_trajs_info = align_smooth_decompose_trajs(
     #     kinematic_snippet, test_sim_results, WALKING_PERIOD_TIMERANGE
@@ -489,7 +534,7 @@ if __name__ == "__main__":
     # test_traj_err = compute_traj_error(test_trajs_info, TURNRATE_WEIGHT)
     # test_contact_err = compute_contact_error(
     #     test_sim_results, test_gait_info, test_adhesion_per_leg,
-    #     test_steps_offset, CONTACT_FORCE_DISP_THRESHOLD, GRF_USE_ZONLY,
+    #     test_steps_offset, GRF_USE_ZONLY, GAIT_METRIC, IOU_CONTACTFORCE_THR, F1_SCALE,
     # )
     # print(f"Test-run objective values:")
     # print(f"  Trajectory error : {test_traj_err:.4f}")
@@ -498,6 +543,47 @@ if __name__ == "__main__":
     # ── Multi-objective optimization ──────────────────────────────────────────
     storage_url = f"sqlite:///{OUTPUT_DIR / 'optuna_study.db'}"
 
+    # print("\nInitializing replay manager for optimization...")
+    # optim_replay_manager = NeuroMechFlyReplayManager(
+    #     sample_invkin_snippet=kinematic_snippet,
+    #     passive_tarsus_stiffness=PASSIVE_TARSUS_STIFFNESS,
+    #     passive_tarsus_damping=PASSIVE_TARSUS_DAMPING,
+    # )
+
+    # common_kwargs = dict(
+    #     replay_manager=optim_replay_manager,
+    #     kinematic_snippet=kinematic_snippet,
+    #     t_range=WALKING_PERIOD_TIMERANGE,
+    #     output_basedir=OUTPUT_DIR,
+    #     storage_url=storage_url,
+    #     turnrate_weight=TURNRATE_WEIGHT,
+    #     use_zonly=GRF_USE_ZONLY,
+    #     n_trials=500,
+    #     n_workers=N_WORKERS,
+    #     rewrite=True,
+    # )
+
+    # print("\n\nUsing F1 gait metric...")
+    # gait_metric = "F1"
+    # for sampler in ["TPE", "NSGA-II"]:
+    #     print("\nStarting TPE optimization...")
+    #     run_optimization(
+    #         study_name=f"nmf_hparamoptim_{gait_metric.lower()}metric_{sampler.lower()}",
+    #         gait_metric=gait_metric,
+    #         f1_scale=0.5,
+    #         sampler=sampler,
+    #         **common_kwargs
+    #     )
+
+    #     print("\nStarting NSGA-II optimization...")
+    #     run_optimization(
+    #         study_name=f"nmf_hparamoptim_{gait_metric.lower()}metric_{sampler.lower()}",
+    #         gait_metric=gait_metric,
+    #         f1_scale=0.5,
+    #         sampler=sampler,
+    #         **common_kwargs
+    #     )
+    
     print("\nInitializing replay manager for optimization...")
     optim_replay_manager = NeuroMechFlyReplayManager(
         sample_invkin_snippet=kinematic_snippet,
@@ -512,18 +598,54 @@ if __name__ == "__main__":
         output_basedir=OUTPUT_DIR,
         storage_url=storage_url,
         turnrate_weight=TURNRATE_WEIGHT,
-        contact_force_disp_threshold=CONTACT_FORCE_DISP_THRESHOLD,
-        use_zonly=GRF_USE_ZONLY,
+        # use_zonly=GRF_USE_ZONLY,
         n_trials=500,
         n_workers=N_WORKERS,
         rewrite=True,
     )
 
-    print("\nStarting TPE optimization...")
-    run_optimization(study_name="nmf_physics_optim_tpe", sampler="TPE", **common_kwargs)
+    # print("\n\nUsing F1 gait metric...")
+    # gait_metric = "F1"
+    # for sampler in ["TPE", "NSGA-II"]:
+    #     print("\nStarting TPE optimization...")
+    #     run_optimization(
+    #         study_name=f"nmf_hparamoptim_{gait_metric.lower()}metric_{sampler.lower()}_zonly",
+    #         gait_metric=gait_metric,
+    #         f1_scale=0.5,
+    #         sampler=sampler,
+    #         **common_kwargs
+    #     )
 
     print("\nStarting NSGA-II optimization...")
-    run_optimization(study_name="nmf_physics_optim_nsgaii", sampler="NSGA-II", **common_kwargs)
+    run_optimization(
+        study_name=f"nmf_hparamoptim_f1metric_nsga-ii_zonly",
+        gait_metric="F1",
+        f1_scale=0.5,
+        sampler="NSGA-II",
+        use_zonly=True,
+        **common_kwargs
+    )
+    
+    # print("Using IOU gait metric...")
+    # gait_metric = "IOU"
+    # for sampler in ["TPE", "NSGA-II"]:
+    #     print("\nStarting TPE optimization...")
+    #     run_optimization(
+    #         study_name=f"nmf_hparamoptim_{gait_metric.lower()}metric_{sampler.lower()}",
+    #         gait_metric=gait_metric,
+    #         iou_contactforce_thr=0.2,
+    #         sampler=sampler,
+    #         **common_kwargs
+    #     )
+
+    #     print("\nStarting NSGA-II optimization...")
+    #     run_optimization(
+    #         study_name=f"nmf_hparamoptim_{gait_metric.lower()}metric_{sampler.lower()}",
+    #         gait_metric=gait_metric,
+    #         iou_contactforce_thr=0.2,
+    #         sampler=sampler,
+    #         **common_kwargs
+        
 
     # ── Print Pareto-optimal parameters for each study ────────────────────────
     for study_name in ("nmf_physics_optim_tpe", "nmf_physics_optim_nsgaii"):

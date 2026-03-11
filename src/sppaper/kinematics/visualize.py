@@ -87,7 +87,16 @@ def plot_time_series(
         data = pickle.load(f)
         sim_results = data["sim_results"]
         kinematic_snippet = data["snippet"]
-        leg_adhesion_force = data["leg_adhesion_force"]
+        if "adhforce_by_leg" in data:
+            adhforce_by_leg = data["adhforce_by_leg"]
+        else:
+            # # Legacy format from replay_walking.py
+            # leg_adhesion_force = data["leg_adhesion_force"]
+            # adhforce_by_leg = {
+            #     leg: replay_manager.leg_adhesion_gain[leg] * leg_adhesion_force
+            #     for leg in LEGS
+            # }
+            raise ValueError("adhforce_by_leg not found in sim_data.pkl - old format!")
         replay_manager = data["replay_manager"]
 
     if t_range is not None:
@@ -270,10 +279,7 @@ def plot_time_series(
     ax = axes[4]
     ts = sim_results["ground_contacts"]["forces_world"][steps_offset:, :, 2].copy() * -1
     ts[np.isnan(ts)] = 0
-    leg_adhesion_forces = (
-        np.array([replay_manager.leg_adhesion_gain[leg] for leg in LEGS])
-        * leg_adhesion_force
-    )
+    leg_adhesion_forces = np.array([adhforce_by_leg[leg] for leg in LEGS])
     ts -= leg_adhesion_forces[None, :]
     ts[ts < contact_force_disp_threshold] = 0
     ts = reduce_timeseries_sim2rec(
