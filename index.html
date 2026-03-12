@@ -1,0 +1,525 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Precise kinematic and muscle recording in freely behaving flies – Wang-Chen et al.</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --bg: #f8f7f4;
+            --surface: #ffffff;
+            --text: #1c1c1c;
+            --text-muted: #6b6860;
+            --accent: #2a5c8f;
+            --accent-light: #e8f0f8;
+            --border: #dddbd6;
+            --max-w: 860px;
+            --pad: clamp(1.5rem, 5vw, 4rem);
+            --spotlight: #2563a8;
+            --poseforge: #b83232;
+            /* Spacing scale */
+            --sp-xs: 0.4rem;
+            --sp-s:  0.75rem;
+            --sp-m:  1.25rem;
+            --sp-l:  2rem;
+            --sp-xl: 2.75rem;
+        }
+
+        *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+        body {
+            font-family: 'Source Sans 3', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            font-size: 1rem;
+            line-height: 1.6;
+        }
+
+        /* ── Layout wrapper ── */
+        .page {
+            max-width: var(--max-w);
+            margin: 0 auto;
+            padding: 0 var(--pad);
+        }
+
+        /* ── Header ── */
+        header {
+            border-bottom: 1px solid var(--border);
+            padding: var(--sp-xl) 0 var(--sp-l);
+            display: flex;
+            flex-direction: column;
+            gap: var(--sp-m);
+        }
+
+        h1 {
+            font-size: clamp(1.3rem, 2.8vw, 1.75rem);
+            font-weight: 600;
+            line-height: 1.3;
+            color: var(--text);
+            max-width: 720px;
+        }
+
+        .tool-taglines {
+            display: flex;
+            flex-direction: column;
+            gap: var(--sp-xs);
+        }
+
+        .tagline {
+            font-size: clamp(1.05rem, 2.1vw, 1.2rem);
+            font-weight: 400;
+            line-height: 1.4;
+        }
+
+        .c-spotlight { color: var(--spotlight); }
+        .c-poseforge { color: var(--poseforge); }
+
+        .author-block {
+            display: flex;
+            flex-direction: column;
+            gap: 0.2rem;
+        }
+
+        .authors {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0;
+            align-items: baseline;
+        }
+
+        .author-item {
+            font-size: 1rem;
+            font-weight: 400;
+            color: var(--text);
+            white-space: nowrap;
+        }
+
+        .author-item:not(:last-child)::after {
+            content: ',\00a0';
+            color: var(--text-muted);
+        }
+
+        .author-name {
+            color: var(--text);
+            text-decoration: none;
+            border-bottom: 1px solid transparent;
+            transition: border-color 0.15s, color 0.15s;
+        }
+
+        .author-name:hover {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        .author-email {
+            display: inline-flex;
+            align-items: center;
+            margin-left: 0.15em;
+            vertical-align: super;
+            line-height: 1;
+            color: var(--text-muted);
+            transition: color 0.15s;
+        }
+
+        .author-email:hover {
+            color: var(--accent);
+        }
+
+        .author-email svg {
+            width: 0.65em;
+            height: 0.65em;
+            stroke: currentColor;
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .affiliation {
+            font-size: 0.9rem;
+            color: var(--text-muted);
+            font-style: italic;
+        }
+
+        .affiliation a {
+            color: var(--text-muted);
+            text-decoration: none;
+            border-bottom: 1px dotted var(--text-muted);
+            transition: color 0.15s, border-color 0.15s;
+        }
+
+        .affiliation a:hover {
+            color: var(--accent);
+            border-bottom-color: var(--accent);
+        }
+
+        /* ── Table of Contents ── */
+        .toc-section {
+            padding: var(--sp-m) 0;
+            border-bottom: 1px solid var(--border);
+        }
+
+        .section-label {
+            font-size: 0.7rem;
+            font-weight: 600;
+            letter-spacing: 0.14em;
+            text-transform: uppercase;
+            color: var(--text-muted);
+            margin-bottom: var(--sp-s);
+        }
+
+        .toc-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+            padding-left: 1.25rem;
+        }
+
+        .toc-link {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            font-size: 0.9rem;
+            color: var(--accent);
+            text-decoration: none;
+            padding: 0.15rem 0;
+            transition: color 0.15s;
+        }
+
+        .toc-link::before {
+            content: '●';
+            font-size: 0.4rem;
+            color: var(--text-muted);
+            flex-shrink: 0;
+        }
+
+        .toc-link:hover { color: var(--text); }
+
+        /* ── Section headings ── */
+        .content-section {
+            padding-top: var(--sp-l);
+            padding-bottom: 0;
+        }
+
+        h2 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: var(--text);
+            margin-bottom: var(--sp-m);
+            padding-bottom: var(--sp-xs);
+            border-bottom: 1px solid var(--border);
+        }
+
+        /* ── Video entries ── */
+        .video-entry {
+            margin-bottom: var(--sp-l);
+        }
+
+        .video-caption {
+            font-size: 0.875rem;
+            color: var(--text-muted);
+            margin-bottom: var(--sp-xs);
+            line-height: 1.4;
+        }
+
+        .video-caption strong {
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .video-wrap {
+            width: 100%;
+            background: #111;
+            box-shadow: 0 2px 14px rgba(0,0,0,0.12);
+            border-radius: 4px;
+            overflow: hidden;
+            line-height: 0;
+        }
+
+        video {
+            width: 100%;
+            height: auto;
+            display: block;
+        }
+
+        /* ── Link cards ── */
+        .links-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+            gap: var(--sp-s);
+        }
+
+        .link-card {
+            display: flex;
+            align-items: center;
+            gap: var(--sp-s);
+            padding: 0.7rem 0.9rem;
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            text-decoration: none;
+            color: var(--text);
+            font-size: 0.875rem;
+            font-weight: 600;
+            transition: border-color 0.15s, box-shadow 0.15s, transform 0.1s;
+        }
+
+        .link-card:hover {
+            border-color: var(--accent);
+            box-shadow: 0 2px 10px rgba(42,92,143,0.1);
+            transform: translateY(-1px);
+        }
+
+        .link-card .icon {
+            width: 30px;
+            height: 30px;
+            border-radius: 5px;
+            background: var(--accent-light);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            flex-shrink: 0;
+        }
+
+        .link-card .icon svg {
+            width: 15px;
+            height: 15px;
+            stroke: var(--accent);
+            fill: none;
+            stroke-width: 2;
+            stroke-linecap: round;
+            stroke-linejoin: round;
+        }
+
+        .link-card .label {
+            display: flex;
+            flex-direction: column;
+            gap: 0.1rem;
+        }
+
+        .link-card .sublabel {
+            font-weight: 300;
+            font-size: 0.75rem;
+            color: var(--text-muted);
+        }
+
+        /* ── Footer ── */
+        footer {
+            margin-top: var(--sp-xl);
+            padding: var(--sp-m) 0;
+            border-top: 1px solid var(--border);
+            font-size: 0.8rem;
+            color: var(--text-muted);
+        }
+
+        /* ── Scroll target highlight ── */
+        .video-entry:target .video-caption {
+            color: var(--accent);
+        }
+    </style>
+</head>
+<body>
+
+<div class="page">
+
+    <!-- ── Header ── -->
+    <header>
+        <h1>Precise kinematic and muscle recording in freely behaving flies enabled by closed-loop tracking and annotation-free pose estimation</h1>
+        <div class="tool-taglines">
+            <p class="tagline"><span class="c-spotlight"><strong><em>Spotlight</em></strong>: high-resolution, simultaneous behavior and muscle recording in freely behaving flies</span></p>
+            <p class="tagline"><span class="c-poseforge"><strong><em>PoseForge</em></strong>: synthetic-data-based pose estimation that requires no human label</span></p>
+        </div>
+        <div class="author-block">
+            <div class="authors">
+                <span class="author-item">
+                    <a class="author-name" href="https://swangchen.me/" target="_blank">Sibo Wang-Chen</a><a class="author-email" href="mailto:sibo.wang@epfl.ch" title="author1@epfl.ch"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg></a>
+                </span>
+                <span class="author-item">
+                    <a class="author-name" href="https://www.linkedin.com/in/vistimpfling/" target="_blank">Victor Alfred Stimpfling</a><a class="author-email" href="mailto:victor.stimpfling@epfl.ch" title="author2@epfl.ch"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg></a>
+                </span>
+                <span class="author-item">
+                    <a class="author-name" href="https://www.linkedin.com/in/maite-azcorra-sedano-3042982ba/" target="_blank">Maite Azcorra</a><a class="author-email" href="mailto:maite.azcorrasedano@epfl.ch" title="author3@epfl.ch"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg></a>
+                </span>
+                <span class="author-item">
+                    <a class="author-name" href="https://www.linkedin.com/in/pavan-ramdya/" target="_blank">Pavan Ramdya</a><a class="author-email" href="mailto:pavan.ramdya@epfl.ch" title="author4@epfl.ch"><svg viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="16" rx="2"/><polyline points="2,4 12,13 22,4"/></svg></a>
+                </span>
+            </div>
+            <div class="affiliation"><a href="https://ramdya-lab.epfl.ch/" target="_blank">Neuroengineering Laboratory</a>, Brain Mind Institute, EPFL</div>
+        </div>
+    </header>
+
+    <!-- ── Table of Contents ── -->
+    <nav class="toc-section">
+        <div class="section-label">Contents</div>
+        <div class="toc-grid">
+            <a class="toc-link" href="#videos">Supplementary videos</a>
+            <a class="toc-link" href="#code">Code repositories</a>
+            <a class="toc-link" href="#hardware">Hardware design</a>
+        </div>
+    </nav>
+
+    <!-- ── Videos ── -->
+    <section class="content-section" id="videos">
+        <h2>Supplementary Videos</h2>
+
+        <div class="video-entry" id="vid1">
+            <p class="video-caption"><strong>Video 1.</strong> Example video data from the <em>Spotlight</em> system.</p>
+            <div class="video-wrap">
+                <video controls>
+                    <source src="https://zenodo.org/records/18973815/files/vid1_spotlight_data_sample.mp4?preview=0" type="video/mp4">
+                </video>
+            </div>
+        </div>
+
+        <div class="video-entry" id="vid2">
+            <p class="video-caption"><strong>Video 2.</strong> Design of the <em>Spotlight</em> system.</p>
+            <div class="video-wrap">
+                <video controls>
+                    <source src="https://zenodo.org/records/18973815/files/vid2_spotlight_overview.mp4?preview=0" type="video/mp4">
+                </video>
+            </div>
+        </div>
+
+        <div class="video-entry" id="vid3">
+            <p class="video-caption"><strong>Video 3.</strong> Example synthetic data and contrastively pretrained latent space for behavior.</p>
+            <div class="video-wrap">
+                <video controls>
+                    <source src="https://zenodo.org/records/18973815/files/vid3_synthetic_data_and_contrastive_pretraining.mp4?preview=0" type="video/mp4">
+                </video>
+            </div>
+        </div>
+
+        <div class="video-entry" id="vid4">
+            <p class="video-caption"><strong>Video 4.</strong> Example 3D keypoint positions predicted by <em>PoseForge</em>.</p>
+            <div class="video-wrap">
+                <video controls>
+                    <source src="https://zenodo.org/records/18973815/files/vid4_keypoints3d.mp4?preview=0" type="video/mp4">
+                </video>
+            </div>
+        </div>
+
+        <div class="video-entry" id="vid5">
+            <p class="video-caption"><strong>Video 5.</strong> Example body segmentation maps predicted by <em>PoseForge</em>.</p>
+            <div class="video-wrap">
+                <video controls>
+                    <source src="https://zenodo.org/records/18973815/files/vid5_bodyseg.mp4?preview=0" type="video/mp4">
+                </video>
+            </div>
+        </div>
+
+        <div class="video-entry" id="vid6">
+            <p class="video-caption"><strong>Video 6.</strong> Replay of reconstructed behavior in NeuroMechFly.</p>
+            <div class="video-wrap">
+                <video controls>
+                    <source src="https://zenodo.org/records/18973815/files/vid6_neuromechfly_replay.mp4?preview=0" type="video/mp4">
+                </video>
+            </div>
+        </div>
+
+        <div class="video-entry" id="vid7">
+            <p class="video-caption"><strong>Video 7.</strong> Long-tendon muscle activities upon vibration of the arena in flies expressing GCaMP8m in these muscles.</p>
+            <div class="video-wrap">
+                <video controls>
+                    <source src="https://zenodo.org/records/18973815/files/vid7_long_tendon_muscles_GCaMP.mp4?preview=0" type="video/mp4">
+                </video>
+            </div>
+        </div>
+
+        <div class="video-entry" id="vid8">
+            <p class="video-caption"><strong>Video 8.</strong> Long-tendon muscle fluorescence traces upon vibration in control animals expressing GFP in these muscles.</p>
+            <div class="video-wrap">
+                <video controls>
+                    <source src="https://zenodo.org/records/18973815/files/vid8_long_tendon_muscles_GFP.mp4?preview=0" type="video/mp4">
+                </video>
+            </div>
+        </div>
+    </section>
+
+    <!-- ── Code ── -->
+    <section class="content-section" id="code">
+        <h2>Code</h2>
+        <div class="links-grid">
+            <a class="link-card" href="https://github.com/NeLy-EPFL/spotlight-control" target="_blank">
+                <span class="icon">
+                    <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                </span>
+                <span class="label">
+                    spotlight-control
+                    <span class="sublabel">Real-time control (C++)</span>
+                </span>
+            </a>
+            <a class="link-card" href="https://github.com/NeLy-EPFL/spotlight-tools" target="_blank">
+                <span class="icon">
+                    <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                </span>
+                <span class="label">
+                    spotlight-tools
+                    <span class="sublabel">Offline utilities (Python)</span>
+                </span>
+            </a>
+            <a class="link-card" href="https://github.com/NeLy-EPFL/poseforge" target="_blank">
+                <span class="icon">
+                    <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                </span>
+                <span class="label">
+                    poseforge
+                    <span class="sublabel">Synthetic data &amp; pose estimation</span>
+                </span>
+            </a>
+            <a class="link-card" href="https://github.com/NeLy-EPFL/spotlight-poseforge-paper" target="_blank">
+                <span class="icon">
+                    <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                </span>
+                <span class="label">
+                    spotlight-poseforge-paper
+                    <span class="sublabel">Figures &amp; video plotting code</span>
+                </span>
+            </a>
+        </div>
+    </section>
+
+    <!-- ── Hardware ── -->
+    <section class="content-section" id="hardware">
+        <h2>Hardware Design</h2>
+        <div class="links-grid">
+            <a class="link-card" href="https://drive.google.com/file/d/1zb20AjmJM1IGjWMM7EePu3ed6nWpxi8J/view?usp=sharing" target="_blank">
+                <span class="icon">
+                    <svg viewBox="0 0 24 24"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/></svg>
+                </span>
+                <span class="label">
+                    CAD Model
+                    <span class="sublabel">Google Drive</span>
+                </span>
+            </a>
+            <a class="link-card" href="assets/partslist.txt" target="_blank">
+                <span class="icon">
+                    <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                </span>
+                <span class="label">
+                    Parts List
+                    <span class="sublabel">Text file</span>
+                </span>
+            </a>
+        </div>
+    </section>
+
+    <footer>
+        Wang-Chen et al. · Supplementary material
+    </footer>
+
+</div>
+
+<script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
+    const params = new URLSearchParams(window.location.search);
+    const video = params.get('vid');
+    if (video) {
+        const target = document.getElementById('vid' + video);
+        if (target) {
+            const videos = document.querySelectorAll('video');
+            let loaded = 0;
+            const scroll = () => {
+                loaded++;
+                if (loaded === videos.length) {
+                    target.scrollIntoView({ behav
