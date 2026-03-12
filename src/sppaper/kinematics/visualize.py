@@ -314,7 +314,21 @@ def plot_trajectory(
     rec_color=REC_COLOR,
     sim_color=SIM_COLOR,
     xticks_interval=0.5,
+    base_rot_deg=0.0,
 ):
+    """Plot trajectory comparison between recorded and simulated data.
+
+    Args:
+        sim_dir: Directory containing sim_data.pkl.
+        t_range: Optional (start, end) time range in seconds to plot.
+        rec_color: Color for recorded trajectory lines.
+        sim_color: Color for simulated trajectory lines.
+        xticks_interval: Interval between x-axis ticks in seconds.
+        base_rot_deg: Degrees to rotate all 2D trajectories and world-frame
+            velocity vectors before plotting. For aesthetics only — does not
+            affect any underlying data or derived quantities (linear speed,
+            turn rate, etc.).
+    """
     with open(sim_dir / "sim_data.pkl", "rb") as f:
         data = pickle.load(f)
         sim_results = data["sim_results"]
@@ -333,6 +347,17 @@ def plot_trajectory(
     xticklabels = [f"{x:.1f}" for x in xticks]
     xticklabels[-1] += " s"
 
+    # Build display rotation matrix (aesthetics only — applied to local copies)
+    _angle = np.deg2rad(base_rot_deg)
+    _c, _s = np.cos(_angle), np.sin(_angle)
+    _R = np.array([[_c, -_s], [_s, _c]])
+    basetraj_rec = trajs_info["basetraj_rec"] @ _R.T
+    basetraj_rec_filtered = trajs_info["basetraj_rec_filtered"] @ _R.T
+    basetraj_sim = trajs_info["basetraj_sim"] @ _R.T
+    basetraj_sim_filtered = trajs_info["basetraj_sim_filtered"] @ _R.T
+    basevelxy_rec = trajs_info["basevelxy_rec"] @ _R.T
+    basevelxy_sim = trajs_info["basevelxy_sim"] @ _R.T
+
     fig = plt.figure(figsize=(140 * MM_TO_IN, 50 * MM_TO_IN), tight_layout=True)
     gs = gridspec.GridSpec(2, 3)
     ax_traj = fig.add_subplot(gs[:, 0])
@@ -343,29 +368,29 @@ def plot_trajectory(
 
     # Trajectories
     ax_traj.plot(
-        trajs_info["basetraj_rec"][:, 0],
-        trajs_info["basetraj_rec"][:, 1],
+        basetraj_rec[:, 0],
+        basetraj_rec[:, 1],
         label="Recorded (raw)",
         color=rec_color,
         linestyle="--",
     )
     ax_traj.plot(
-        trajs_info["basetraj_rec_filtered"][:, 0],
-        trajs_info["basetraj_rec_filtered"][:, 1],
+        basetraj_rec_filtered[:, 0],
+        basetraj_rec_filtered[:, 1],
         label="Recorded (smoothed)",
         color=rec_color,
         linestyle="-",
     )
     ax_traj.plot(
-        trajs_info["basetraj_sim"][:, 0],
-        trajs_info["basetraj_sim"][:, 1],
+        basetraj_sim[:, 0],
+        basetraj_sim[:, 1],
         label="Simulated (raw)",
         color=sim_color,
         linestyle="--",
     )
     ax_traj.plot(
-        trajs_info["basetraj_sim_filtered"][:, 0],
-        trajs_info["basetraj_sim_filtered"][:, 1],
+        basetraj_sim_filtered[:, 0],
+        basetraj_sim_filtered[:, 1],
         label="Simulated (smoothed)",
         color=sim_color,
         linestyle="-",
@@ -378,23 +403,15 @@ def plot_trajectory(
     ax_traj.set_title("Trajectory")
 
     # Velocity in world coordinates
-    ax_velx.plot(
-        t_grid, trajs_info["basevelxy_rec"][:, 0], label="Recorded", color=rec_color
-    )
-    ax_velx.plot(
-        t_grid, trajs_info["basevelxy_sim"][:, 0], label="Simulated", color=sim_color
-    )
+    ax_velx.plot(t_grid, basevelxy_rec[:, 0], label="Recorded", color=rec_color)
+    ax_velx.plot(t_grid, basevelxy_sim[:, 0], label="Simulated", color=sim_color)
     ax_velx.set_ylabel("x vel. (mm/s)")
     ax_velx.set_xlim(0, t_grid[-1] + dt)
     ax_velx.set_xticks(xticks, xticklabels)
     ax_velx.set_title("Velocity (global x)")
     sns.despine(ax=ax_velx)
-    ax_vely.plot(
-        t_grid, trajs_info["basevelxy_rec"][:, 1], label="Recorded", color=rec_color
-    )
-    ax_vely.plot(
-        t_grid, trajs_info["basevelxy_sim"][:, 1], label="Simulated", color=sim_color
-    )
+    ax_vely.plot(t_grid, basevelxy_rec[:, 1], label="Recorded", color=rec_color)
+    ax_vely.plot(t_grid, basevelxy_sim[:, 1], label="Simulated", color=sim_color)
     ax_vely.set_ylabel("y vel. (mm/s)")
     ax_vely.set_xticks(xticks, xticklabels)
     ax_vely.set_xlim(0, t_grid[-1] + dt)
@@ -955,15 +972,13 @@ def plot_claw_traj_by_swing_stance(sim_dir, gait_info, t_range=None):
         kinematic_snippet = data["snippet"]
         sim_results = data["sim_results"]
 
-    traj_align_transform = align_smooth_decompose_trajs(
+    trajs_info = align_smooth_decompose_trajs(
         kinematic_snippet, sim_results, t_range=t_range
-    )["rec_traj_alignment_transform"]
-    rot_mat = traj_align_transform["R"]
-    translation = traj_align_transform["t"]
+    )
+    origin_offset = trajs_info["origin_offset"]
 
-    claw_xypos = gait_info["claw_xypos_arena"]
+    claw_xypos = gait_info["claw_xypos_arena"] - origin_offset
     swing_mask = gait_info["swing_mask"]
-    claw_xypos = np.einsum("ij,tnj->tni", rot_mat, claw_xypos) + translation
     claw_xypos_stance_only = claw_xypos.copy()
     claw_xypos_stance_only[swing_mask] = np.nan
 

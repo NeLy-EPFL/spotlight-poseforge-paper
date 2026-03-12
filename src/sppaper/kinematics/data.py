@@ -266,16 +266,17 @@ def align_smooth_decompose_trajs(
     slice_ = slice(steps_offset, steps_offset + len(kinematic_snippet))
 
     dt = 1 / kinematic_snippet.data_fps
-    basetraj_sim = sim_results["thorax_pos_inputmatched"][slice_]
-    align_info = traj.align_traj(kinematic_snippet.thorax_pos_mm, basetraj_sim)
-    basetraj_rec = align_info["traj_aligned"]
+    basetraj_rec = kinematic_snippet.thorax_pos_mm
+    basetraj_sim_raw = sim_results["thorax_pos_inputmatched"][slice_]
+    align_info = traj.align_traj(basetraj_sim_raw, basetraj_rec)
+    basetraj_sim = align_info["traj_aligned"]
     basetraj_sim_filtered, basevelxy_sim = traj.get_denoised_traj_and_vel(
         basetraj_sim, dt, sg_window_sec=posvelxy_sg_window_sec
     )
     basetraj_rec_filtered, basevelxy_rec = traj.get_denoised_traj_and_vel(
         basetraj_rec, dt, sg_window_sec=posvelxy_sg_window_sec
     )
-    origin_offset = basetraj_sim[0].copy()
+    origin_offset = basetraj_rec[0].copy()
     basetraj_sim -= origin_offset
     basetraj_sim_filtered -= origin_offset
     basetraj_rec -= origin_offset
@@ -310,7 +311,7 @@ def align_smooth_decompose_trajs(
         "steps_offset": steps_offset,
         "slice": slice_,
         "origin_offset": origin_offset,
-        "rec_traj_alignment_transform": align_info,
+        "sim_traj_alignment_transform": align_info,
     }
 
 
