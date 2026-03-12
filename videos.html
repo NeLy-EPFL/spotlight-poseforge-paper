@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Page</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            background-color: #f4f4f4;
+        }
+        .video-container {
+            width: 90%;
+            max-width: 800px;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.2);
+            background: #000;
+            line-height: 0; /* Removes tiny gap at bottom of video */
+        }
+        video {
+            width: 100%;
+            height: auto;
+        }
+        h1 {
+            color: #333;
+            font-size: 2rem;
+        }
+        h2 {
+            font-size: 1rem;
+        }
+    </style>
+</head>
+
+<body>
+
+    <h1>Supplementary videos</h1>
+
+    <h2 id="vid1">Video 1: Example video data from the <i>Spotlight</i> system.</h2>
+    <div class="video-container">
+        <video controls>
+            <source src="https://zenodo.org/records/18973815/files/vid1_spotlight_data_sample.mp4?preview=0" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <h2 id="vid2">Video 2: Design of the <i>Spotlight</i> system.</h2>
+    <div class="video-container">
+        <video controls>
+            <source src="https://zenodo.org/records/18973815/files/vid2_spotlight_overview.mp4?preview=0" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <h2 id="vid3">Video 3: Example synthetic data and contrastively pretrained latent space for behavior.</h2>
+    <div class="video-container">
+        <video controls>
+            <source src="https://zenodo.org/records/18973815/files/vid3_synthetic_data_and_contrastive_pretraining.mp4?preview=0" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <h2 id="vid4">Video 4: Example 3D keypoint positions predicted by <i>PoseForge</i>.</h2>
+    <div class="video-container">
+        <video controls>
+            <source src="https://zenodo.org/records/18973815/files/vid4_keypoints3d.mp4?preview=0" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <h2 id="vid5">Video 5: Example body segmentation maps predicted by <i>PoseForge</i>.</h2>
+    <div class="video-container">
+        <video controls>
+            <source src="https://zenodo.org/records/18973815/files/vid5_bodyseg.mp4?preview=0" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <h2 id="vid6">Video 6: Replay of reconstructed behavior in NeuroMechFly.</h2>
+    <div class="video-container">
+        <video controls>
+            <source src="https://zenodo.org/records/18973815/files/vid6_neuromechfly_replay.mp4?preview=0" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <h2 id="vid7">Video 7: Long-tendon muscle activities upon vibration of the arena in flies expressing GCaMP8m in these muscles.</h2>
+    <div class="video-container">
+        <video controls>
+            <source src="https://zenodo.org/records/18973815/files/vid7_long_tendon_muscles_GCaMP.mp4?preview=0" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <h2 id="vid8">Video 8: Long-tendon muscle fluorescence traces upon vibration in control animals expressing GFP in these muscles.</h2>
+    <div class="video-container">
+        <video controls>
+            <source src="https://zenodo.org/records/18973815/files/vid8_long_tendon_muscles_GFP.mp4?preview=0" type="video/mp4">
+            Your browser does not support the video tag.
+        </video>
+    </div>
+
+    <script>
+        const params = new URLSearchParams(window.location.search);
+        const video = params.get('vid');
+        if (video) {
+            const target = document.getElementById('vid' + video);
+            if (target) {
+                const videos = document.querySelectorAll('video');
+                let loaded = 0;
+                const scroll = () => {
+                    loaded++;
+                    if (loaded === videos.length) {
+                        target.scrollIntoView({ behavior: 'smooth' });
+                    }
+                };
+                videos.forEach(v => {
+                    if (v.readyState >= 1) scroll(); // already loaded
+                    else v.addEventListener('loadedmetadata', scroll);
+                });
+            }
+        }
+    </script>
+
+</body>
+</html>
