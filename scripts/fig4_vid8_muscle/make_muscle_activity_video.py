@@ -41,6 +41,10 @@ from sppaper.common.muscle import (
     compute_delta_f_over_f,
     create_segmentation_overlay,
 )
+from sppaper.common.plot import add_deltaf_scale_bar, setup_matplotlib_params
+
+# Set up matplotlib styling
+setup_matplotlib_params()
 
 # Import configuration parameters
 from figure_config import (
@@ -81,6 +85,10 @@ from figure_config import (
     TRACE_CURRENT_TIME_WIDTH,
     TRACE_CURRENT_TIME_ALPHA,
     STIM_PERIOD_ALPHA,
+    SCALE_BAR_VALUE,
+    AXIS_LABEL_FONTSIZE,
+    TICK_LABEL_FONTSIZE,
+    SCALE_BAR_FONTSIZE,
 )
 
 # Build codec options from config
@@ -93,49 +101,64 @@ CODEC_OPTIONS = {
 def create_trace_panel_fast(time_sec, traces, segment_names, current_time_idx,
                            stim_starts, stim_ends, panel_width, panel_height):
     """Create trace panel optimized for speed (creates new figure each time but faster)."""
-    fig = plt.figure(figsize=(panel_width / 100, panel_height / 100), 
-                     dpi=100, facecolor='black')
+    import seaborn as sns
+    
+    # Use panel dimensions as provided
+    fig_width = panel_width / 100  # Already in inches from panel_width
+    fig_height = panel_height / 100
+    
+    fig = plt.figure(figsize=(fig_width, fig_height), dpi=100, facecolor='black', tight_layout=True)
     ax = fig.add_subplot(111)
     ax.set_facecolor('black')
     
     n_segments = len(segment_names)
     offset_spacing = traces.max()
     
-    # Plot each trace (only up to current time for efficiency)
+    # Plot each trace using config linewidth
     for j, segment_name in enumerate(segment_names):
         offset = j * offset_spacing
         color = SEGMENT_COLORS.get(segment_name, "#ffffff")
         
         # Plot the trace
-        ax.plot(time_sec, traces[:, j] + offset, color=color, linewidth=TRACE_LINEWIDTH)
-        
-        # Add horizontal baseline
-        ax.axhline(y=offset, color='gray', linestyle='--', alpha=TRACE_BASELINE_ALPHA, linewidth=0.5)
+        ax.plot(time_sec, traces[:, j] + offset, color=color, linewidth=TRACE_LINEWIDTH, clip_on=False)
     
-    # Mark current time
+    # Mark current time using config parameters
     current_time = time_sec[current_time_idx]
-    ax.axvline(x=current_time, color='red', linestyle='-', linewidth=TRACE_CURRENT_TIME_WIDTH, alpha=TRACE_CURRENT_TIME_ALPHA)
+    ax.axvline(x=current_time, color='red', linestyle='-', 
+              linewidth=TRACE_CURRENT_TIME_WIDTH, alpha=TRACE_CURRENT_TIME_ALPHA)
     
-    # Mark stimulation periods
+    # Mark stimulation periods using config parameters
     for start_time, end_time in zip(stim_starts, stim_ends):
         ax.axvspan(start_time, end_time, alpha=STIM_PERIOD_ALPHA, color='yellow')
     
-    # Set y-ticks to show segment names
-    ytick_positions = [j * offset_spacing for j in range(n_segments)]
+    # Configure y-axis: center labels in their allocated vertical space
+    ytick_positions = [j * offset_spacing + offset_spacing/2 for j in range(n_segments)]
     ax.set_yticks(ytick_positions)
-    ax.set_yticklabels(segment_names, fontsize=8, color='white')
+    ax.set_yticklabels(segment_names, fontsize=TICK_LABEL_FONTSIZE, color='white')
+    ax.set_ylabel(r"Muscle Activity ($\Delta$F/F$_0$)", fontsize=AXIS_LABEL_FONTSIZE, color='white')
+    ax.yaxis.set_label_coords(-0.13, 0.5)
     
-    # Labels and styling
-    ax.set_xlabel("Time (s)", fontsize=10, color='white')
-    ax.set_ylabel("Muscle Segment", fontsize=10, color='white')
-    ax.set_title(r"Muscle Activity ($\Delta$F/F$_0$)", fontsize=12, color='white')
-    ax.tick_params(colors='white')
+    # Add scale bar at the TOP (y=(n_segments-1)*offset_spacing is the top trace)
+    y_top_trace = (n_segments - 1) * offset_spacing
+    add_deltaf_scale_bar(ax, time_sec, scale_bar_value=SCALE_BAR_VALUE, y_base=y_top_trace,
+                        label_text=str(SCALE_BAR_VALUE), label_fontsize=SCALE_BAR_FONTSIZE,
+                        facecolor='black', edgecolor='white', linewidth=0.5, textcolor='white')
+    
+    # Configure x-axis
+    ax.set_xlabel("Time (s)", fontsize=AXIS_LABEL_FONTSIZE, color='white')
+    ax.set_xlim(time_sec[0], time_sec[-1])
+    
+    # Set y limits with padding (normal orientation: lower values at bottom)
+    y_max_limit = n_segments * offset_spacing
+    ax.set_ylim(-0.25 * offset_spacing, y_max_limit + 0.25 * offset_spacing)
+    
+    # Styling for dark background
+    ax.tick_params(colors='white', labelsize=TICK_LABEL_FONTSIZE)
     ax.spines['bottom'].set_color('white')
     ax.spines['left'].set_color('white')
     ax.spines['top'].set_visible(False)
     ax.spines['right'].set_visible(False)
-    ax.grid(axis='x', alpha=0.3, color='white')
-    ax.set_xlim(time_sec[0], time_sec[-1])
+    ax.grid(axis='x', alpha=0.2, color='white', linewidth=0.5)
     
     # Convert to image
     canvas = FigureCanvasAgg(fig)

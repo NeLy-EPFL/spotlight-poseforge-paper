@@ -26,6 +26,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import seaborn as sns
 from PIL import Image, ImageDraw, ImageFont
 from tqdm import tqdm
 
@@ -37,6 +38,10 @@ from sppaper.common.muscle import (
     compute_delta_f_over_f,
     create_segmentation_overlay,
 )
+from sppaper.common.plot import add_deltaf_scale_bar, setup_matplotlib_params
+
+# Set up matplotlib styling
+setup_matplotlib_params()
 
 # Import configuration
 from figure_config import (
@@ -54,6 +59,7 @@ from figure_config import (
     ANNOTATION_COLOR,
     ANNOTATION_POSITION,
     STIM_PERIOD_COLOR,
+    STIM_PERIOD_ALPHA,
     # Shared settings
     NORM_LOWER_PERCENTILE,
     NORM_UPPER_PERCENTILE,
@@ -72,6 +78,12 @@ from figure_config import (
     SEGMENT_COLORS,
     TRACE_LINEWIDTH,
     TRACE_BASELINE_ALPHA,
+    SCALE_BAR_VALUE,
+    AXIS_LABEL_FONTSIZE,
+    TICK_LABEL_FONTSIZE,
+    SCALE_BAR_FONTSIZE,
+    ANNOTATION_FONTSIZE_PLOT,
+    SCALE_BAR_VALUE,
 )
 
 
@@ -120,8 +132,16 @@ def annotate_image(img, text, font_size=ANNOTATION_FONT_SIZE,
 def create_trace_figure(time_sec, traces, segment_names, stim_start_times, stim_end_times,
                        capture_times, capture_labels):
     """Create trace plot showing full time course with markers."""
-    fig, ax = plt.subplots(figsize=(TRACE_FIGURE_WIDTH, TRACE_FIGURE_HEIGHT), dpi=FIGURE_DPI)
+    import seaborn as sns
+    
+    # Use config constants for figure dimensions
+    MM_TO_IN = 1 / 25.4
+    fig_width = TRACE_FIGURE_WIDTH
+    fig_height = TRACE_FIGURE_HEIGHT
+    
+    fig, ax = plt.subplots(figsize=(fig_width, fig_height), dpi=FIGURE_DPI, tight_layout=True)
     ax.set_facecolor('white')
+    sns.despine(ax=ax)
     
     n_segments = len(segment_names)
     # Use nanmax to handle NaN values
@@ -134,33 +154,37 @@ def create_trace_figure(time_sec, traces, segment_names, stim_start_times, stim_
     for j, segment_name in enumerate(segment_names):
         offset = j * offset_spacing
         color = SEGMENT_COLORS.get(segment_name, "#000000")
-        ax.plot(time_sec, traces[:, j] + offset, color=color, linewidth=TRACE_LINEWIDTH)
-        ax.axhline(y=offset, color='gray', linestyle='--', alpha=TRACE_BASELINE_ALPHA, linewidth=0.5)
+        ax.plot(time_sec, traces[:, j] + offset, color=color, linewidth=TRACE_LINEWIDTH, clip_on=False)
     
-    # Mark stimulation periods (light gray instead of yellow)
+    # Mark stimulation periods using config color
     for start_time, end_time in zip(stim_start_times, stim_end_times):
-        ax.axvspan(start_time, end_time, alpha=0.3, color=STIM_PERIOD_COLOR, zorder=0)
+        ax.axvspan(start_time, end_time, alpha=STIM_PERIOD_ALPHA, color=STIM_PERIOD_COLOR, zorder=0)
     
-    # Mark captured time points with asterisks
-    y_max = (n_segments - 1) * offset_spacing + traces_max * 0.1
+    # Mark captured time points with asterisks at the TOP
+    y_top = (n_segments - 1) * offset_spacing + traces_max * 0.15  # Just above the top trace
     for i, (capture_time, label) in enumerate(zip(capture_times, capture_labels)):
-        # Add asterisk marker at the top
-        #ax.plot(capture_time, y_max, marker='*', color='black', markersize=8, zorder=10)
-        ax.text(capture_time, y_max, '*', color='black', fontsize=12, ha='center', va='bottom', zorder=10)
+        ax.text(capture_time, y_top, '*', color='black', fontsize=ANNOTATION_FONTSIZE_PLOT, ha='center', va='bottom', zorder=10, clip_on=False)
     
-    # Styling
-    ytick_positions = [j * offset_spacing for j in range(n_segments)]
+    # Configure y-axis: center labels in their allocated vertical space
+    ytick_positions = [j * offset_spacing + offset_spacing/2 for j in range(n_segments)]
     ax.set_yticks(ytick_positions)
-    ax.set_yticklabels(segment_names, fontsize=9)
-    ax.set_xlabel("Time (s)", fontsize=11)
-    ax.set_ylabel("Muscle Segment", fontsize=11)
-    ax.set_title(r"Muscle Activity ($\Delta$F/F$_0$)", fontsize=12, pad=10)
-    ax.grid(axis='x', alpha=0.2, linewidth=0.5)
-    ax.set_xlim(time_sec[0], time_sec[-1])
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
+    ax.set_yticklabels(segment_names, fontsize=TICK_LABEL_FONTSIZE)
+    ax.set_ylabel(r"Muscle Activity ($\Delta$F/F$_0$)", fontsize=AXIS_LABEL_FONTSIZE)
     
-    plt.tight_layout()
+    # Configure x-axis
+    ax.set_xlabel("Time (s)", fontsize=AXIS_LABEL_FONTSIZE)
+    ax.set_xlim(time_sec[0], time_sec[-1])
+    
+    # Set y limits with some padding (normal orientation: lower values at bottom)
+    y_max_limit = n_segments * offset_spacing
+    ax.set_ylim(-0.25 * offset_spacing, y_max_limit + 0.25 * offset_spacing)
+    
+    # Add scale bar at the TOP (y=(n_segments-1)*offset_spacing is the top trace)
+    y_top_trace = (n_segments - 1) * offset_spacing
+    add_deltaf_scale_bar(ax, time_sec, scale_bar_value=SCALE_BAR_VALUE, y_base=y_top_trace,
+                        label_text=str(SCALE_BAR_VALUE), label_fontsize=SCALE_BAR_FONTSIZE,
+                        facecolor='black', edgecolor='black', linewidth=1, textcolor='black')
+    
     return fig
 
 

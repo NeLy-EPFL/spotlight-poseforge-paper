@@ -87,7 +87,8 @@ def compute_muscle_activity(mf_metadata, processed_folder, segmaps, segmap_frame
                            seg_labels, segments_to_analyze, duo_yaml, k,
                            morph_kernel_size, morph_n_iterations, 
                            dilation_kernels, bilateral_d, 
-                           bilateral_sigma_color, bilateral_sigma_space):
+                           bilateral_sigma_color, bilateral_sigma_space,
+                           min_fragment_size=50, max_fragment_distance=100):
     """Extract muscle activity for all frames and selected segments.
     
     Args:
@@ -105,6 +106,8 @@ def compute_muscle_activity(mf_metadata, processed_folder, segmaps, segmap_frame
         bilateral_d: Diameter of pixel neighborhood for bilateral filter
         bilateral_sigma_color: Filter sigma in color space
         bilateral_sigma_space: Filter sigma in coordinate space
+        min_fragment_size: Minimum size in pixels to keep a fragment
+        max_fragment_distance: Maximum distance in pixels between fragments to merge
     
     Returns:
         muscle_activity: (n_frames, n_segments) array of activity values
@@ -117,7 +120,8 @@ def compute_muscle_activity(mf_metadata, processed_folder, segmaps, segmap_frame
         mf_metadata, processed_folder, segmaps, segmap_frame_ids,
         seg_labels, segments_to_analyze, duo_yaml, frame_indices, k,
         morph_kernel_size, morph_n_iterations, dilation_kernels,
-        bilateral_d, bilateral_sigma_color, bilateral_sigma_space
+        bilateral_d, bilateral_sigma_color, bilateral_sigma_space,
+        min_fragment_size, max_fragment_distance
     )
 
 def create_asymmetric_dilation_kernel(direction, size):
@@ -164,9 +168,147 @@ def create_asymmetric_dilation_kernel(direction, size):
     return kernel
 
 
+def _denoise_masks_with_fragment_merging(
+    segmap: np.ndarray,
+    class_labels: list,
+    morph_kernel: np.ndarray,
+    n_iterations: int,
+    min_fragment_size: int,
+    max_fragment_distance: int,
+) -> np.ndarray:
+    """Apply morphological denoising to all class masks with fragment merging.
+
+    After morphological operations, instead of keeping only the largest component,
+    this function preserves and merges valid fragments:
+    - Keeps fragments >= min_fragment_size pixels
+    - Merges fragments within max_fragment_distance pixels using convex hull
+    - Falls back to largest component if fragments are too far apart
+
+    Args:
+        segmap: Segmentation map with class labels, shape (H, W)
+        class_labels: List of class names corresponding to segmap values
+        morph_kernel: Structuring element for morphological operations
+        n_iterations: Number of iterations for opening and closing
+        min_fragment_size: Minimum size in pixels to keep a fragment
+        max_fragment_distance: Maximum distance in pixels between fragments to merge
+
+    Returns:
+        Array of denoised binary masks, shape (len(class_labels), H, W)
+    """
+    denoised_masks = []
+
+    for i, class_label in enumerate(class_labels):
+        mask = (segmap == i).astype(np.uint8)
+
+        if class_label.lower() == "background":
+            denoised_mask = mask.astype(bool)
+        else:
+            # Morphological opening and closing
+            opened = cv2.morphologyEx(
+                mask, cv2.MORPH_OPEN, morph_kernel, iterations=n_iterations
+            )
+            closed = cv2.morphologyEx(
+                opened, cv2.MORPH_CLOSE, morph_kernel, iterations=n_iterations
+            )
+
+            # Find connected components with stats
+            num_labels, labels_im, stats, centroids = cv2.connectedComponentsWithStats(
+                closed, connectivity=8
+            )
+            
+            if num_labels <= 1:
+                denoised_mask = np.zeros_like(mask, dtype=bool)
+            else:
+                # Filter components by size (skip label 0 which is background)
+                valid_components = []
+                for label_id in range(1, num_labels):
+                    area = stats[label_id, cv2.CC_STAT_AREA]
+                    if area >= min_fragment_size:
+                        valid_components.append(label_id)
+                
+                if len(valid_components) == 0:
+                    # No valid components, return empty mask
+                    denoised_mask = np.zeros_like(mask, dtype=bool)
+                elif len(valid_components) == 1:
+                    # Only one valid component, use it
+                    denoised_mask = labels_im == valid_components[0]
+                else:
+                    # Multiple valid components - build distance graph and find largest cluster
+                    component_centroids = [centroids[label_id] for label_id in valid_components]
+                    n_components = len(valid_components)
+                    
+                    # Build adjacency matrix: components are connected if within max_fragment_distance
+                    adjacency = np.zeros((n_components, n_components), dtype=bool)
+                    for j in range(n_components):
+                        for k in range(j + 1, n_components):
+                            dist = np.linalg.norm(component_centroids[j] - component_centroids[k])
+                            if dist <= max_fragment_distance:
+                                adjacency[j, k] = True
+                                adjacency[k, j] = True
+                    
+                    # Find connected components in the distance graph using BFS
+                    visited = np.zeros(n_components, dtype=bool)
+                    clusters = []
+                    
+                    for start_idx in range(n_components):
+                        if visited[start_idx]:
+                            continue
+                        
+                        # BFS to find all connected components
+                        cluster = []
+                        queue = [start_idx]
+                        visited[start_idx] = True
+                        
+                        while queue:
+                            current = queue.pop(0)
+                            cluster.append(current)
+                            
+                            # Add all unvisited neighbors
+                            for neighbor_idx in range(n_components):
+                                if adjacency[current, neighbor_idx] and not visited[neighbor_idx]:
+                                    visited[neighbor_idx] = True
+                                    queue.append(neighbor_idx)
+                        
+                        clusters.append(cluster)
+                    
+                    # Select the largest cluster (by total area)
+                    largest_cluster = max(clusters, key=lambda c: sum(stats[valid_components[idx], cv2.CC_STAT_AREA] for idx in c))
+                    components_to_merge = [valid_components[idx] for idx in largest_cluster]
+                    
+                    # Create combined mask of selected components
+                    combined_mask = np.zeros_like(mask)
+                    for label_id in components_to_merge:
+                        combined_mask |= (labels_im == label_id).astype(np.uint8)
+                    
+                    # Find contours and compute convex hull
+                    contours, _ = cv2.findContours(
+                        combined_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                    )
+                    if len(contours) > 0:
+                        # Merge all contours and compute convex hull
+                        all_points = np.vstack(contours)
+                        hull = cv2.convexHull(all_points)
+                        
+                        # Create mask from convex hull
+                        merged_mask = np.zeros_like(mask)
+                        cv2.fillPoly(merged_mask, [hull], 1)
+                        denoised_mask = merged_mask.astype(bool)
+                    else:
+                        denoised_mask = combined_mask.astype(bool)
+
+        denoised_masks.append(denoised_mask)
+
+    return np.stack(denoised_masks, axis=0)
+
+
 def denoise_and_dilate_masks_with_config(segmap, seg_labels, morph_kernel_size, 
-                                         morph_n_iterations, dilation_kernels):
+                                         morph_n_iterations, dilation_kernels,
+                                         min_fragment_size, max_fragment_distance):
     """Denoise and dilate masks using kernel configuration dictionary.
+    
+    After denoising, valid mask fragments are preserved and merged if they meet criteria:
+    - Fragment size >= min_fragment_size pixels
+    - Distance between fragments <= max_fragment_distance pixels
     
     Args:
         segmap: Segmentation map
@@ -174,15 +316,20 @@ def denoise_and_dilate_masks_with_config(segmap, seg_labels, morph_kernel_size,
         morph_kernel_size: Size for denoising morphological operations
         morph_n_iterations: Number of denoising iterations
         dilation_kernels: Dict mapping segment names to {'direction': str, 'size': int}
+        min_fragment_size: Minimum size in pixels to keep a fragment (default: 50)
+        max_fragment_distance: Maximum distance in pixels between fragments to merge (default: 100)
     
     Returns:
         List of dilated masks
     """
-    # Denoise first
+    # Denoise with fragment merging
     morph_kernel = cv2.getStructuringElement(
         cv2.MORPH_ELLIPSE, (morph_kernel_size, morph_kernel_size)
     )
-    denoised_masks = _denoise_masks(segmap, seg_labels, morph_kernel, morph_n_iterations)
+    denoised_masks = _denoise_masks_with_fragment_merging(
+        segmap, seg_labels, morph_kernel, morph_n_iterations,
+        min_fragment_size=min_fragment_size, max_fragment_distance=max_fragment_distance
+    )
     
     # Get default kernel config from the dictionary
     default_kernel_config = dilation_kernels['default']
@@ -219,7 +366,8 @@ def compute_muscle_activity_for_frames(mf_metadata, processed_folder, segmaps, s
                                       frame_indices, k,
                                       morph_kernel_size, morph_n_iterations,
                                       dilation_kernels, bilateral_d,
-                                      bilateral_sigma_color, bilateral_sigma_space):
+                                      bilateral_sigma_color, bilateral_sigma_space,
+                                      min_fragment_size, max_fragment_distance):
     """Extract muscle activity for specific frame indices only.
     
     More efficient than compute_muscle_activity when you only need a subset of frames.
@@ -240,6 +388,8 @@ def compute_muscle_activity_for_frames(mf_metadata, processed_folder, segmaps, s
         bilateral_d: Diameter of pixel neighborhood for bilateral filter
         bilateral_sigma_color: Filter sigma in color space
         bilateral_sigma_space: Filter sigma in coordinate space
+        min_fragment_size: Minimum size in pixels to keep a fragment
+        max_fragment_distance: Maximum distance in pixels between fragments to merge
     
     Returns:
         muscle_activity: (len(frame_indices), n_segments) array of activity values
@@ -282,7 +432,7 @@ def compute_muscle_activity_for_frames(mf_metadata, processed_folder, segmaps, s
         # Denoise and dilate masks using configured kernels
         final_masks = denoise_and_dilate_masks_with_config(
             segmap, seg_labels, morph_kernel_size, morph_n_iterations,
-            dilation_kernels
+            dilation_kernels, min_fragment_size, max_fragment_distance
         )
         
         # Store processed masks for this frame (for overlay visualization)

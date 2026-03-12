@@ -31,6 +31,7 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import matplotlib.colors as mcolors
+import seaborn as sns
 from tqdm import tqdm
 
 from spotlight_tools.postprocessing.muscle import (
@@ -42,6 +43,10 @@ from sppaper.common.muscle import (
     compute_muscle_activity_for_frames,
     compute_delta_f_over_f,
 )
+from sppaper.common.plot import add_trace_scale_bars, setup_matplotlib_params
+
+# Set up matplotlib styling
+setup_matplotlib_params()
 
 # Import configuration
 from figure_config import (
@@ -61,6 +66,13 @@ from figure_config import (
     SEGMENT_ORDER,
     SEGMENT_COLORS,
     STIM_PERIOD_COLOR,
+    STIM_PERIOD_ALPHA,
+    TRACE_LINEWIDTH,
+    TRACE_BASELINE_ALPHA,
+    SCALE_BAR_VALUE,
+    AXIS_LABEL_FONTSIZE,
+    TICK_LABEL_FONTSIZE,
+    TITLE_FONTSIZE,
 )
 
 
@@ -501,12 +513,16 @@ def aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder,
             
         print(f"\nCreating figure for {group_name} with {len(group_stims)} stimulations...")
         
+        import seaborn as sns
+        
         n_segments = len(segments_to_analyze)
-        # More square aspect ratio
-        fig_height = 3 * n_segments
-        fig_width = 6
+        # Use mm-based dimensions similar to kinematics plots
+        MM_TO_IN = 1 / 25.4
+        fig_width = 100 * MM_TO_IN
+        fig_height = (30 * n_segments) * MM_TO_IN  # Scale height with segments
         fig, axes = plt.subplots(n_segments, 1, figsize=(fig_width, fig_height), 
-                                sharex=True, squeeze=False)
+                                sharex=True, squeeze=False, tight_layout=True)
+        fig.subplots_adjust(hspace=0.08)  # Minimal spacing between subplots
         
         # Get average stim duration (safe from division by zero since we checked len > 0)
         avg_stim_dur = np.mean([s['stim_duration'] for s in group_stims])
@@ -514,6 +530,9 @@ def aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder,
         for seg_idx, segment_name in enumerate(segments_to_analyze):
             ax = axes[seg_idx, 0]
             color = SEGMENT_COLORS.get(segment_name, "#000000")
+            
+            # Apply seaborn despine for cleaner look
+            sns.despine(ax=ax)
             
             # Determine the common time range: [-window_sec, stim_duration + window_sec]
             time_end = avg_stim_dur + window_sec
@@ -534,8 +553,8 @@ def aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder,
                 interp_trace = np.interp(common_time, window_time_sorted, trace_sorted)
                 interpolated_traces.append(interp_trace)
                 
-                # Plot individual trace
-                ax.plot(common_time, interp_trace, color=color, alpha=0.2, linewidth=0.6)
+                # Plot individual trace with thinner linewidth
+                ax.plot(common_time, interp_trace, color=color, alpha=0.2, linewidth=0.5, clip_on=False)
             
             # Compute and plot mean trace
             if len(interpolated_traces) > 0:
@@ -547,37 +566,43 @@ def aggregate_and_plot(all_valid_stims, segments_to_analyze, output_folder,
                 else:
                     sem_trace = np.zeros_like(mean_trace)
                 
-                # Plot mean ± SEM
-                ax.plot(common_time, mean_trace, color=color, linewidth=2.5)
+                # Plot mean ± SEM with better linewidth
+                ax.plot(common_time, mean_trace, color=color, linewidth=1.5, clip_on=False)
                 if len(interpolated_traces) > 1:
                     ax.fill_between(common_time, mean_trace - sem_trace, mean_trace + sem_trace,
                                     color=color, alpha=0.25)
             
-            # Mark stimulation period
-            ax.axvline(x=0, color='black', linestyle='-', linewidth=0.8, alpha=0.8)
-            ax.axvspan(0, avg_stim_dur, alpha=0.3, color=STIM_PERIOD_COLOR, zorder=0)
+            # Mark stimulation period with lighter styling
+            ax.axvline(x=0, color='black', linestyle='-', linewidth=0.5, alpha=0.7)
+            ax.axvspan(0, avg_stim_dur, alpha=0.15, color='#cccccc', zorder=0)
             
-            # Styling
-            ax.set_ylabel(segment_name, fontsize=10, color=color, fontweight='bold')
+            # Styling - segment name on left, position label consistently
+            ax.set_ylabel(segment_name, fontsize=AXIS_LABEL_FONTSIZE, rotation=0, ha='right', va='center', 
+                         color=color, labelpad=15)
+            ax.yaxis.set_label_coords(-0.13, 0.5)
+            ax.tick_params(axis='y', labelsize=TICK_LABEL_FONTSIZE, colors=color, labelcolor=color,
+                          width=0.5, length=2)
             ax.grid(axis='both', alpha=0.2, linewidth=0.5)
-            ax.spines['top'].set_visible(False)
-            ax.spines['right'].set_visible(False)
             
             if seg_idx == 0:
                 title = f"n={len(group_stims)} trials"
                 if aggregate_by != 'all':
                     title = f"{group_name}: {title}"
-                ax.set_title(title, fontsize=11, pad=10)
+                ax.set_title(title, fontsize=TITLE_FONTSIZE, pad=5)
+            
+            # Only show x-axis label on bottom subplot
+            if seg_idx < n_segments - 1:
+                ax.tick_params(labelbottom=False)
         
         # Set x-axis limits to match window definition
         time_end = avg_stim_dur + window_sec
         for ax_row in axes:
             ax_row[0].set_xlim(-window_sec, time_end)
         
-        axes[-1, 0].set_xlabel("Time relative to stimulation onset (s)", fontsize=10)
-        fig.text(0.04, 0.5, r"$\Delta$F/F$_0$", va='center', rotation='vertical', fontsize=10)
+        axes[-1, 0].set_xlabel("Time relative to stimulation onset (s)", fontsize=AXIS_LABEL_FONTSIZE)
+        axes[-1, 0].tick_params(axis='x', labelsize=TICK_LABEL_FONTSIZE, width=0.5, length=2)
         
-        plt.tight_layout()
+        # No need for plt.tight_layout() since we already set tight_layout=True in subplots
         
         # Save figure with hyperparameters in filename
         safe_name = group_name.replace('/', '_')
