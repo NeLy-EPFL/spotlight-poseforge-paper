@@ -403,15 +403,23 @@ def plot_trajectory(
     ax_traj.set_title("Trajectory")
 
     # Velocity in world coordinates
-    ax_velx.plot(t_grid, basevelxy_rec[:, 0], label="Recorded", color=rec_color)
-    ax_velx.plot(t_grid, basevelxy_sim[:, 0], label="Simulated", color=sim_color)
+    ax_velx.plot(
+        t_grid, basevelxy_rec[:, 0], label="Recorded", color=rec_color
+    )
+    ax_velx.plot(
+        t_grid, basevelxy_sim[:, 0], label="Simulated", color=sim_color
+    )
     ax_velx.set_ylabel("x vel. (mm/s)")
     ax_velx.set_xlim(0, t_grid[-1] + dt)
     ax_velx.set_xticks(xticks, xticklabels)
     ax_velx.set_title("Velocity (global x)")
     sns.despine(ax=ax_velx)
-    ax_vely.plot(t_grid, basevelxy_rec[:, 1], label="Recorded", color=rec_color)
-    ax_vely.plot(t_grid, basevelxy_sim[:, 1], label="Simulated", color=sim_color)
+    ax_vely.plot(
+        t_grid, basevelxy_rec[:, 1], label="Recorded", color=rec_color
+    )
+    ax_vely.plot(
+        t_grid, basevelxy_sim[:, 1], label="Simulated", color=sim_color
+    )
     ax_vely.set_ylabel("y vel. (mm/s)")
     ax_vely.set_xticks(xticks, xticklabels)
     ax_vely.set_xlim(0, t_grid[-1] + dt)
@@ -450,6 +458,169 @@ def plot_trajectory(
     sns.despine(ax=ax_turnrate)
 
     return fig, (ax_traj, ax_velx, ax_vely, ax_linspeed, ax_turnrate)
+
+
+def plot_trajectory_ensemble(
+    sim_dirs,
+    t_range=None,
+    rec_color=REC_COLOR,
+    sim_color=SIM_COLOR,
+    sim_alpha=0.2,
+    sim_linewidth=0.5,
+    xticks_interval=0.5,
+    base_rot_deg=0.0,
+    traj_xlim=None,
+    traj_ylim=None,
+    linspeed_ylim=None,
+    turnrate_ylim=None,
+):
+    """Plot 2D trajectory, linear speed, and turn rate for an ensemble of trials.
+
+    All simulated trials are overlaid on the same axes at low opacity so
+    trial-to-trial variability is visible. The experimental (recorded) trace
+    is drawn on top in a distinct color.
+
+    Args:
+        sim_dirs: Iterable of Path objects, each containing a sim_data.pkl.
+            The recorded data is taken from the first valid directory
+            (it is the same kinematic snippet for all trials).
+        t_range: Optional (start, end) time range in seconds to plot.
+        rec_color: Color for the recorded trajectory. Defaults to REC_COLOR.
+        sim_color: Color for simulated trajectories.
+        sim_alpha: Opacity for each simulated trial line.
+        sim_linewidth: Line width for each simulated trial line.
+        xticks_interval: Interval between x-axis ticks in seconds.
+        base_rot_deg: Degrees to rotate all 2D trajectories before plotting.
+            For aesthetics only — does not affect linear speed, turn rate,
+            or any other derived quantities.
+        traj_xlim: Optional (min, max) x-axis limits for the trajectory panel.
+        traj_ylim: Optional (min, max) y-axis limits for the trajectory panel.
+        linspeed_ylim: Optional (min, max) y-axis limits for the linear speed panel.
+        turnrate_ylim: Optional (min, max) y-axis limits for the turn rate panel.
+
+    Returns:
+        fig, (ax_traj, ax_linspeed, ax_turnrate)
+    """
+    # Build display rotation matrix (aesthetics only)
+    _angle = np.deg2rad(base_rot_deg)
+    _c, _s = np.cos(_angle), np.sin(_angle)
+    _R = np.array([[_c, -_s], [_s, _c]])
+
+    fig = plt.figure(figsize=(100 * MM_TO_IN, 60 * MM_TO_IN), tight_layout=True)
+    gs = gridspec.GridSpec(2, 2)
+    ax_traj = fig.add_subplot(gs[:, 0])
+    ax_linspeed = fig.add_subplot(gs[0, 1])
+    ax_turnrate = fig.add_subplot(gs[1, 1])
+
+    rec_trajs_info = None
+    t_grid = None
+    xticks = None
+    xticklabels = None
+
+    # --- Simulated trials (drawn first so rec renders on top) ---
+    for sim_dir in sim_dirs:
+        with open(sim_dir / "sim_data.pkl", "rb") as f:
+            data = pickle.load(f)
+            sim_results = data["sim_results"]
+            kinematic_snippet = data["snippet"]
+
+        trajs_info = align_smooth_decompose_trajs(
+            kinematic_snippet, sim_results, t_range=t_range
+        )
+
+        # Capture rec data and time grid once from the first trial
+        if rec_trajs_info is None:
+            rec_trajs_info = trajs_info
+            if t_range is not None:
+                kinematic_snippet = kinematic_snippet.get_subselection(*t_range)
+            dt = 1 / kinematic_snippet.data_fps
+            t_grid = np.arange(len(kinematic_snippet)) * dt
+            last_xtick = t_grid[-1] + dt
+            xticks = list(np.arange(0, last_xtick + 1e-6, xticks_interval))
+            xticklabels = [f"{x:.1f}" for x in xticks]
+            xticklabels[-1] += " s"
+
+        sim_traj = trajs_info["basetraj_sim_filtered"] @ _R.T
+        ax_traj.plot(
+            sim_traj[:, 0],
+            sim_traj[:, 1],
+            color=sim_color,
+            alpha=sim_alpha,
+            linewidth=sim_linewidth,
+            zorder=1,
+        )
+        ax_linspeed.plot(
+            t_grid,
+            trajs_info["baselinspeed_sim"],
+            color=sim_color,
+            alpha=sim_alpha,
+            linewidth=sim_linewidth,
+            zorder=1,
+        )
+        ax_turnrate.plot(
+            t_grid,
+            trajs_info["baseturnrate_sim"] / (2 * np.pi),
+            color=sim_color,
+            alpha=sim_alpha,
+            linewidth=sim_linewidth,
+            zorder=1,
+        )
+
+    # --- Recorded trace on top ---
+    # Subtract the post-rotation start point so the filtered trace begins exactly
+    # at the origin (SG filtering can shift the first point slightly from zero).
+    rec_traj = rec_trajs_info["basetraj_rec_filtered"] @ _R.T
+    rec_traj = rec_traj - rec_traj[0]
+    ax_traj.plot(
+        rec_traj[:, 0],
+        rec_traj[:, 1],
+        color=rec_color,
+        zorder=10,
+        label="Recorded",
+    )
+    ax_traj.scatter([0], [0], color="black", s=5, zorder=11)
+    ax_traj.set_aspect("equal", adjustable="datalim")
+    ax_traj.set_xlabel("x pos. (mm)")
+    ax_traj.set_ylabel("y pos. (mm)")
+    ax_traj.set_title("Trajectory")
+    ax_traj.legend()
+    if traj_xlim is not None:
+        ax_traj.set_xlim(traj_xlim)
+    if traj_ylim is not None:
+        ax_traj.set_ylim(traj_ylim)
+
+    ax_linspeed.plot(
+        t_grid,
+        rec_trajs_info["baselinspeed_rec"],
+        color=rec_color,
+        zorder=10,
+        label="Recorded",
+    )
+    ax_linspeed.set_ylabel("Linear speed (mm/s)")
+    ax_linspeed.set_xticks(xticks, xticklabels)
+    ax_linspeed.set_xlim(0, t_grid[-1] + t_grid[1])
+    ax_linspeed.set_title("Linear speed")
+    sns.despine(ax=ax_linspeed)
+    if linspeed_ylim is not None:
+        ax_linspeed.set_ylim(linspeed_ylim)
+
+    ax_turnrate.plot(
+        t_grid,
+        rec_trajs_info["baseturnrate_rec"] / (2 * np.pi),
+        color=rec_color,
+        zorder=10,
+        label="Recorded",
+    )
+    ax_turnrate.set_xlabel("Time (s)")
+    ax_turnrate.set_ylabel("Turn rate (turns/s)")
+    ax_turnrate.set_xticks(xticks, xticklabels)
+    ax_turnrate.set_xlim(0, t_grid[-1] + t_grid[1])
+    ax_turnrate.set_title("Turn rate")
+    sns.despine(ax=ax_turnrate)
+    if turnrate_ylim is not None:
+        ax_turnrate.set_ylim(turnrate_ylim)
+
+    return fig, (ax_traj, ax_linspeed, ax_turnrate)
 
 
 def get_centerpos_and_heading(neck_pos, thorax_pos, filter_window=None):
