@@ -6,6 +6,7 @@
     <title>Precise kinematic and muscle recording in freely behaving flies – Wang-Chen et al.</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
     <style>
         :root {
             --bg: #f8f7f4;
@@ -46,7 +47,6 @@
 
         /* ── Header ── */
         header {
-            border-bottom: 1px solid var(--border);
             padding: var(--sp-xl) 0 var(--sp-l);
             display: flex;
             flex-direction: column;
@@ -58,7 +58,6 @@
             font-weight: 600;
             line-height: 1.3;
             color: var(--text);
-            max-width: 720px;
         }
 
         .tool-taglines {
@@ -156,6 +155,7 @@
         /* ── Table of Contents ── */
         .toc-section {
             padding: var(--sp-m) 0;
+            border-top: 1px solid var(--border);
             border-bottom: 1px solid var(--border);
         }
 
@@ -334,10 +334,6 @@
     <!-- ── Header ── -->
     <header>
         <h1>Precise kinematic and muscle recording in freely behaving flies enabled by closed-loop tracking and annotation-free pose estimation</h1>
-        <!-- <div class="tool-taglines">
-            <p class="tagline"><span class="c-spotlight"><strong><em>Spotlight</em></strong>: high-resolution, simultaneous behavior and muscle recording in freely behaving flies</span></p>
-            <p class="tagline"><span class="c-poseforge"><strong><em>PoseForge</em></strong>: synthetic-data-based pose estimation that requires no human label</span></p>
-        </div> -->
         <div class="author-block">
             <div class="authors">
                 <span class="author-item">
@@ -357,7 +353,8 @@
         </div>
     </header>
 
-    <div class="video-entry" style="margin-top: var(--sp-l);">
+    <div class="video-entry" style="margin-bottom: var(--sp-l);">
+        <div class="section-label" style="margin-bottom: var(--sp-s);">Summary Video</div>
         <div class="video-wrap">
             <video controls>
                 <source src="https://zenodo.org/records/19002284/files/summary_video.mov?download=0" type="video/mp4">
@@ -496,7 +493,16 @@
                 </span>
                 <span class="label">
                     spotlight-poseforge-paper
-                    <span class="sublabel">Figures &amp; video plotting code</span>
+                    <span class="sublabel">Plotting scripts</span>
+                </span>
+            </a>
+            <a class="link-card" href="https://neuromechfly.org/" target="_blank">
+                <span class="icon">
+                    <svg viewBox="0 0 24 24"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
+                </span>
+                <span class="label">
+                    NeuroMechFly
+                    <span class="sublabel">Fly neuromechanical simulation</span>
                 </span>
             </a>
         </div>
@@ -512,16 +518,16 @@
                 </span>
                 <span class="label">
                     CAD Model
-                    <span class="sublabel">Google Drive</span>
+                    <span class="sublabel">STEP file</span>
                 </span>
             </a>
-            <a class="link-card" href="assets/partslist.csv" target="_blank">
+            <a class="link-card" href="https://docs.google.com/spreadsheets/d/1pVjChvxByXQEIiSzOUFlmdnAR5llLkS_uleCl1u8fAg/edit?usp=sharing" target="_blank">
                 <span class="icon">
                     <svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
                 </span>
                 <span class="label">
                     Parts List
-                    <span class="sublabel">CSV file</span>
+                    <span class="sublabel">Google Sheets</span>
                 </span>
             </a>
         </div>
@@ -533,28 +539,6 @@
     </footer>
 
 </div>
-
-<script>
-    const params = new URLSearchParams(window.location.search);
-    const video = params.get('vid');
-    if (video) {
-        const target = document.getElementById('vid' + video);
-        if (target) {
-            const videos = document.querySelectorAll('video');
-            let loaded = 0;
-            const scroll = () => {
-                loaded++;
-                if (loaded === videos.length) {
-                    target.scrollIntoView({ behavior: 'smooth' });
-                }
-            };
-            videos.forEach(v => {
-                if (v.readyState >= 1) scroll();
-                else v.addEventListener('loadedmetadata', scroll);
-            });
-        }
-    }
-</script>
 
 </body>
 </html>
