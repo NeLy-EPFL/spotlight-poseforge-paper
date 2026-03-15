@@ -27,6 +27,7 @@ body {
     color: var(--text);
     font-size: 1rem;
     line-height: 1.6;
+    overflow-x: hidden;
 }
 
 /* ── Outer layout ── */
@@ -318,22 +319,56 @@ footer a:hover { color: var(--accent); border-bottom-color: var(--accent); }
 }
 
 /* ── Responsive ── */
-@media (max-width: 680px) {
+@media (max-width: 768px) {
+    html, body {
+        overflow-x: hidden;
+    }
+
     .layout {
         flex-direction: column;
         gap: 0;
-        padding: 0 1.1rem 0 0.75rem;
+        padding: 0 1rem;
+        max-width: 100%;
     }
+
     .sidebar {
         width: 100%;
         position: static;
         padding-top: var(--sp-m);
+        padding-bottom: 0;
         border-bottom: 1px solid var(--border);
         margin-bottom: var(--sp-m);
     }
+
+    .sidebar .section-label { display: none; }
+
     .nav-toggle { display: flex; }
-    .section-label { display: none; }
+
     .toc-grid { display: none; padding-bottom: var(--sp-s); }
     .toc-grid.open { display: flex; }
-    .main { padding-top: 0; }
+
+    .main {
+        padding-top: 0;
+        width: 100%;
+        max-width: 100%;
+        overflow-x: hidden;
+    }
+
+    h1 { font-size: 1.2rem; }
+
+    .links-grid {
+        grid-template-columns: 1fr;
+    }
+
+    .pdf-embed {
+        height: 60vh;
+    }
+
+    .bibtex {
+        white-space: pre-wrap;
+        word-break: break-all;
+        font-size: 0.72rem;
+    }
+
+    .video-wrap { border-radius: 0; }
 }
