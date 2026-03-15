@@ -3,9 +3,21 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Precise kinematic and muscle recording in freely behaving flies · Wang-Chen et al.</title>
+    <title>Precise kinematic and muscle recording in freely behaving flies | Wang-Chen et al.</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link href="https://fonts.googleapis.com/css2?family=Source+Sans+3:wght@300;400;600;700&display=swap" rel="stylesheet">
+    <!-- Social media preview -->
+    <meta property="og:type"         content="article">
+    <meta property="og:title"        content="Precise kinematic and muscle recording in freely behaving flies | Wang-Chen et al.">
+    <meta property="og:description"  content="Precise kinematic and muscle recording in freely behaving flies enabled by closed-loop tracking and annotation-free pose estimation. We present Spotlight, a system for high-resolution simultaneous behavior and muscle recording, and PoseForge, a synthetic-data-based pose estimation method requiring no human annotation.">
+    <meta property="og:url"          content="https://nely-epfl.github.io/spotlight-poseforge-paper/">
+    <meta property="og:image"        content="https://nely-epfl.github.io/spotlight-poseforge-paper/assets/social_banner.png">
+    <meta property="og:image:width"  content="1200">
+    <meta property="og:image:height" content="630">
+    <meta name="twitter:card"        content="summary_large_image">
+    <meta name="twitter:title"       content="Precise kinematic and muscle recording in freely behaving flies | Wang-Chen et al.">
+    <meta name="twitter:description" content="Precise kinematic and muscle recording in freely behaving flies enabled by closed-loop tracking and annotation-free pose estimation. We present Spotlight, a system for high-resolution simultaneous behavior and muscle recording, and PoseForge, a synthetic-data-based pose estimation method requiring no human annotation.">
+    <meta name="twitter:image"       content="https://nely-epfl.github.io/spotlight-poseforge-paper/assets/social_banner.png">
     <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
     <link rel="stylesheet" href="styles.css">
 </head>
@@ -175,19 +187,6 @@
 </div><!-- /.layout -->
 
 <script>
-    // Deep-link to a specific video via ?vid=N
-    const params = new URLSearchParams(window.location.search);
-    const vid = params.get('vid');
-    if (vid) {
-        const target = document.getElementById('vid' + vid);
-        if (target) {
-            const videos = document.querySelectorAll('video');
-            let loaded = 0;
-            const tryScroll = () => { if (++loaded === videos.length) target.scrollIntoView({ behavior: 'smooth' }); };
-            videos.forEach(v => v.readyState >= 1 ? tryScroll() : v.addEventListener('loadedmetadata', tryScroll));
-        }
-    }
-
     // Highlight active TOC link based on scroll position
     const sections = document.querySelectorAll('section[id]');
     const tocLinks = document.querySelectorAll('.toc-link');
